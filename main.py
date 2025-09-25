@@ -57,7 +57,7 @@ column_mapping = {
     'ESTS DESC': 'ESTS_DESC',
 }
 
-@app.post("/generate-report/")
+@app.post("/generate-report")
 async def generate_report(
     banner_file: UploadFile = File(...),
     dynamics_file: UploadFile = File(...),
