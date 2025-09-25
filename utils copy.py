@@ -59,30 +59,26 @@ def extract_academic_year(dt_series):
     def format_years(start, end):
         return f"{start}-{str(end)[-2:]}"
 
-    academic_years = np.array([ 
-        format_years(y, y+1) if m >= 8 else format_years(y-1, y) 
-        for y, m in zip(year_vals, month_vals) 
+    academic_years = np.array([
+        format_years(y, y+1) if m >= 8 else format_years(y-1, y)
+        for y, m in zip(year_vals, month_vals)
     ])
 
     years[valid_mask] = academic_years
     return years
 
 def load_large_excel(file_path, usecols, dtype_map=None):
-    """Load large Excel files with optimized memory usage and handle missing columns"""
+    """Load large Excel files with optimized memory usage"""
     logger.info(f"Loading {file_path} with optimized settings")
     
-    # Read the first few rows to inspect available columns
-    df = pd.read_excel(file_path, engine='openpyxl', nrows=5)
-    logger.info(f"Columns found: {df.columns.tolist()}")
+    # Read entire file with specified columns
+    df = pd.read_excel(
+        file_path,
+        usecols=usecols,
+        engine='openpyxl'
+    )
     
-    # Filter out columns that are not present in the file
-    available_columns = df.columns.tolist()
-    usecols = [col for col in usecols if col in available_columns]
-
-    # Read the full dataset with the available columns
-    df = pd.read_excel(file_path, usecols=usecols, engine='openpyxl')
-    
-    # Apply dtype conversions if specified
+    # Apply data type conversions if specified
     if dtype_map:
         for col, dtype in dtype_map.items():
             if col in df.columns:
@@ -93,86 +89,68 @@ def load_large_excel(file_path, usecols, dtype_map=None):
                 elif dtype == 'category':
                     df[col] = df[col].astype('category')
     
-    # Check for missing columns and add them with NaN or a default value
-    missing_columns = set(usecols) - set(df.columns)
-    for col in missing_columns:
-        df[col] = '--'  # Add default value for missing columns (can be NaN or '--' based on your requirement)
-    
     return reduce_memory_usage(df)
 
+# Clean and enhance final report
 def clean_final_report(df):
     """Clean and enhance final enrolment report with unified agent details"""
     logger.info("Cleaning final enrolment report...")
 
-    # Remove any existing Agent Code, Agent Source, Agent Name, and Student ID columns to avoid duplication
+    # Remove any existing Agent Code, Agent Source, Agent Name columns to avoid duplication
     df.drop(['Agent Code', 'Agent Source', 'Agent Name', 'Student ID'], axis=1, errors='ignore', inplace=True)
-
-    # Rename ID to Student ID and drop ID column after creating Student ID column. Set type to int32
+    # rename ID to Student ID and drop ID column after creating Student ID column. set type to int32
     df.rename(columns={'ID': 'Student ID'}, inplace=True)
     df['Student ID'] = df['Student ID'].astype('int32')
 
-    # Handle 'Agency Code (Banner)' column
-    if 'Agency Code (Banner)' in df.columns:
-        conditions = [
-            df['Agency Code (Banner)'].notna() & (df['Agency Code (Banner)'] != ''),
-            df['Agent_Code_Agency_Assisting_Application'].notna() & (df['Agent_Code_Agency_Assisting_Application'] != '')
-        ]
-        choices = [
-            df['Agency Code (Banner)'],
-            df['Agent_Code_Agency_Assisting_Application']
-        ]
-        df['Agent Code'] = np.select(conditions, choices, default=np.nan)
-    else:
-        logger.warning("'Agency Code (Banner)' column is missing, setting 'Agent Code' to NaN")
-        df['Agent Code'] = np.nan
+    # Create unified Agent Code column with source tracking
+    conditions = [
+        df['Agency Code (Banner)'].notna() & (df['Agency Code (Banner)'] != ''),
+        df['Agent_Code_Agency_Assisting_Application'].notna() & (df['Agent_Code_Agency_Assisting_Application'] != '')
+    ]
+    choices = [
+        df['Agency Code (Banner)'],
+        df['Agent_Code_Agency_Assisting_Application']
+    ]
+    df['Agent Code'] = np.select(conditions, choices, default=np.nan)
 
-    # Handle 'Agent Source' column
-    if 'Agent Source' in df.columns:
-        df['Agent Source'] = df['Agent Source'].astype('category')
-    else:
-        logger.warning("'Agent Source' column is missing, skipping creation of 'Agent Source'")
-        df['Agent Source'] = np.nan
+    # Create Agent Source column
+    df['Agent Source'] = np.select(
+        conditions,
+        ['Banner', 'Dynamics'],
+        default=None
+    )
 
-    # Handle 'Agent Name' column
-    if 'Agency Name (Banner)' in df.columns:
-        df['Agent Name'] = np.where(
-            df.get('Agency Name (Banner)', pd.Series([np.nan]*len(df))).notna() & (df.get('Agency Name (Banner)', pd.Series([np.nan]*len(df))) != ''),
-            df.get('Agency Name (Banner)', pd.Series([np.nan]*len(df))),
-            np.where(
-                df.get('Agency_Assisting_Application', pd.Series([np.nan]*len(df))).notna() & (df.get('Agency_Assisting_Application', pd.Series([np.nan]*len(df))) != ''),
-                df.get('Agency_Assisting_Application', pd.Series([np.nan]*len(df))),
-                ''
-            )
+    # Create Agent Name column
+    df['Agent Name'] = np.where(
+        df.get('Agency Name (Banner)', pd.Series([np.nan]*len(df))).notna() & (df.get('Agency Name (Banner)', pd.Series([np.nan]*len(df))) != ''),
+        df.get('Agency Name (Banner)', pd.Series([np.nan]*len(df))),
+        np.where(
+            df.get('Agency_Assisting_Application', pd.Series([np.nan]*len(df))).notna() & (df.get('Agency_Assisting_Application', pd.Series([np.nan]*len(df))) != ''),
+            df.get('Agency_Assisting_Application', pd.Series([np.nan]*len(df))),
+            ''
         )
-    else:
-        logger.warning("'Agency Name (Banner)' column is missing, setting 'Agent Name' to empty string")
-        df['Agent Name'] = ''  # Default to empty string if column is missing
+    )
 
-    # Convert the three new columns to 'category' for memory optimization
+    # make the new three columns categorical to save memory and create in first three columns
     df['Agent Code'] = df['Agent Code'].astype('category')
     df['Agent Name'] = df['Agent Name'].astype('category')
     df['Agent Source'] = df['Agent Source'].astype('category')
-
-    # Reorder columns to place the Agent columns first
     df = df[['Agent Code', 'Agent Source', 'Agent Name', 'Student ID'] + [col for col in df.columns if col not in ['Agent Code', 'Agent Source', 'Agent Name', 'Student ID']]]
 
-    # Add missing columns if they don't exist
-    for col in ['FORENAME', 'MIDDLE_NAMES', 'SURNAME', 'PATHWAY_1', 'PATHWAY_2', 'SCHOOL_NAME', 'ENQUIRY_DETAIL']:
-        if col not in df.columns:
-            df[col] = '--'  # Default to '--' for missing columns
+    # rename Level_Code to following PC to PGT, PR to PGR, UG remains UG
+    if 'Level_Code' in df.columns and df['Level_Code'].notna().any():
+        if isinstance(df['Level_Code'].dtype, pd.CategoricalDtype):
+            df['Level_Code'] = df['Level_Code'].cat.rename_categories({'PC': 'PGT', 'PR': 'PGR', 'UG': 'UG'})
+        else:
+            df['Level_Code'] = df['Level_Code'].replace({'PC': 'PGT', 'PR': 'PGR'})
 
-    # Handle 'COUNTRY_OF_DOMICILE' and 'LEVEL' mapping
-    if 'COUNTRY_OF_DOMICILE' not in df.columns:
-        df['COUNTRY_OF_DOMICILE'] = df['DOMICILE DESC']
-    if 'LEVEL' not in df.columns:
-        df['LEVEL'] = df['LEVL_CODE']
-
-    # Rename Level_Code values (e.g., 'PC' to 'PGT', 'PR' to 'PGR')
-    if 'LEVEL' in df.columns and df['LEVEL'].notna().any():
-        df['LEVEL'] = df['LEVEL'].replace({'PC': 'PGT', 'PR': 'PGR'})
-
-    # Drop unnecessary columns
-    df.drop(['Agency Code (Banner)', 'Agency Name (Banner)', 'Agent_Code_Agency_Assisting_Application', 'Agency_Assisting_Application'], axis=1, errors='ignore', inplace=True)
+    #Drop intermediate columns if present
+    df.drop([
+        'Agency Code (Banner)',
+        'Agency Name (Banner)',
+        'Agent_Code_Agency_Assisting_Application',
+        'Agency_Assisting_Application'
+    ], axis=1, errors='ignore', inplace=True)
 
     logger.info("Final report cleaned with unified agent details")
     return df
@@ -182,61 +160,43 @@ def process_banner(banner_path):
     logger.info("Processing Banner document...")
     
     # Define necessary columns
-    usecols = ['Agency Code (Banner)', 'Agency Name (Banner)', 'ID', 'APPLICATION DATE', 'ENTRY TERM', 'DOMICILE DESC', 
-               'Residence_Description', 'LEVL_CODE', 'Faculty', 'PROGRAM', 'PROGRAM DESCRIPTION', 'OnCampus', 'Latest Decision',
-               'Decision_Description', 'DECISION DATE', 'ESTS CODE', 'ESTS DESC', 'Last Institution Code']
+    usecols = ['Agency Code (Banner)', 'Agency Name (Banner)', 'ID', 'Registration_Code', 'Application Date', 'ENTRY TERM', 'Domicile', 
+               'Residence_Description', 'Level_Code', 'Faculty', 'Program_Code', 'Program_Description', 'OnCampus', 'Latest Decision',
+               'Decision_Description']
     
     # Define data types
     dtype_map = {
         'ID': 'int32',
-        # 'Registration_Code': 'category',
+        'Registration_Code': 'category',
         'ENTRY TERM': 'category',
-        'DOMICILE DESC': 'category',
+        'Domicile': 'category',
         'Residence_Description': 'category',
-        'LEVL_CODE': 'category',
+        'Level_Code': 'category',
         'Faculty': 'category',
-        'PROGRAM': 'category',
+        'Program_Code': 'category',
         'Agency Code (Banner)': 'category',
         'Agency Name (Banner)': 'category',
         'latest Decision': 'category',
         'Decision_Description': 'category',
-        'ESTS CODE': 'category',
-        'ESTS DESC': 'category',
-        'Last Institution Code': 'category',
-        'Institution Description': 'category',
     }
     
     # Load data
     banner_df = load_large_excel(banner_path, usecols, dtype_map)
     
-    # Extract academic year 
-    banner_df['APPLICATION DATE'] = pd.to_datetime(
-        banner_df['APPLICATION DATE'], 
-        errors='coerce'
-    )
     # Extract academic year
-    banner_df['DECISION DATE'] = pd.to_datetime(
-        banner_df['DECISION DATE'], 
+    banner_df['Application Date'] = pd.to_datetime(
+        banner_df['Application Date'], 
         errors='coerce'
     )
+    banner_df['Application_Year'] = extract_academic_year(banner_df['Application Date'])
 
+    # if Program_Code values are in 4287, 4291, 8383, 8384, 8454, 8802, 8809, 8810, 8811 then set PressessionalCourse to Y otherwise N
+    presessional_mask = banner_df['Program_Code'].isin(PRE_SESSIONAL_PROGRAM_CODES)
+    banner_df['PresessionalCourse'] = np.where(presessional_mask, 'Y', 'N')
 
-
-    banner_df['Application_Year'] = extract_academic_year(banner_df['APPLICATION DATE'])
-
-   # Check if 'PROGRAM' exists
-    if 'PROGRAM' in banner_df.columns:
-        # Condition for Presessional Course (based on predefined codes)
-        presessional_mask = banner_df['PROGRAM'].isin(PRE_SESSIONAL_PROGRAM_CODES)
-        banner_df['PresessionalCourse'] = np.where(presessional_mask, 'Y', 'N')
-
-        # Condition for Summer School (based on predefined codes)
-        summer_school_mask = banner_df['PROGRAM'].isin(SUMMER_SCHOOL_PROGRAM_CODES)
-        banner_df['Summer_School'] = np.where(summer_school_mask, 'Y', 'N')
-    else:
-        logger.warning("'PROGRAM' column is missing.")
-        banner_df['PresessionalCourse'] = '--'  # Set to '--' if PROGRAM column is missing
-        banner_df['Summer_School'] = '--'      # Set to '--' if PROGRAM column is missing
+    # if Program_Code values are in 9541, 9544, 9546, 9547 then set SummerSchool to Y otherwise N
+    summer_school_mask = banner_df['Program_Code'].isin(SUMMER_SCHOOL_PROGRAM_CODES)
+    banner_df['Summer_School'] = np.where(summer_school_mask, 'Y', 'N')
 
     # Convert 'OnCampus' Y value to Pathway column with vlaue CEG and N value to Pathway column with empty
     banner_df['Pathway'] = np.where(banner_df['OnCampus'] == 'Y', 'CEG', '')
@@ -245,10 +205,10 @@ def process_banner(banner_path):
     logger.info(f"Banner records loaded: {len(banner_df)}") 
     
     # Filter records
-    # banner_df = banner_df[
-    #     (banner_df['Registration_Code'] == 'EN') &
-    #     (banner_df['Application_Year'] == '2023-24')
-    # ]
+    banner_df = banner_df[
+        (banner_df['Registration_Code'] == 'EN') &
+        (banner_df['Application_Year'] == '2023-24')
+    ]
     
     logger.info(f"Filtered Banner records with EN and Application Year: {len(banner_df)} rows")
     return banner_df.reset_index(drop=True)
@@ -322,54 +282,38 @@ def calculate_fee_metrics(group):
 def process_fee04(fee04_path):
     """Process Fee04 document with optimized operations and fee logic"""
     logger.info("Processing Fee04 document...")
-
-    # ✅ Define columns you expect
-    usecols = [
-        'Student ID', 'Transaction Type', 'Sponsor Code',
-        'Enrolment Status', 'Original Transaction Value',
-        'Fee Type(T)', 'Sponsor Code(T)', 'Programme', 'Study Level(T)'
-    ]
-
-    # ✅ Define data types
+    
+    # Define columns
+    usecols = ['Student ID', 'Transaction Type', 'Sponsor Code', 
+               'Enrolment Status', 'Original Transaction Value',
+               'Fee Type(T)', 'Sponsor Code(T)', 'Programme', 'Study Level(T)']
+    
+    # Define data types
     dtype_map = {
-        'Student ID': 'Int32',  # use nullable Int32 so it doesn't crash on missing values
+        'Student ID': 'int32',
         'Transaction Type': 'category',
         'Sponsor Code': 'category',
         'Enrolment Status': 'category',
         'Original Transaction Value': 'float32',
         'Fee Type(T)': 'category',
         'Sponsor Code(T)': 'category',
-        'Programme': 'Int32',  # also nullable
+        'Programme': 'int32',
         'Study Level(T)': 'category'
     }
-
-    # ✅ Load data
+    
+    # Load data
     fee04_df = load_large_excel(fee04_path, usecols, dtype_map)
-
-    # ✅ Check if 'Enrolment Status' column exists
-    if 'Enrolment Status' not in fee04_df.columns:
-        logger.warning("'Enrolment Status' column missing in Fee04. Skipping filter.")
-        fee04_filtered = fee04_df.copy()
-    else:
-        # Filter records where Enrolment Status = 'EN'
-        fee04_filtered = fee04_df[fee04_df['Enrolment Status'] == 'EN']
-
+    
+    # Filter records
+    fee04_filtered = fee04_df[
+        (fee04_df['Enrolment Status'] == 'EN')
+    ]
     logger.info(f"Filtered Fee04 transactions: {len(fee04_filtered)}")
-
-    # ✅ If there’s no data after filtering, return empty DataFrame to avoid groupby crash
-    if fee04_filtered.empty:
-        logger.warning("No Fee04 records after filtering. Returning empty DataFrame.")
-        return pd.DataFrame()
-
-    # ✅ Calculate metrics
+    
+    # Calculate metrics
     logger.info("Calculating fee metrics with business rules...")
-    fee04_grouped = (
-        fee04_filtered
-        .groupby('Student ID', group_keys=False)
-        .apply(calculate_fee_metrics)
-        .reset_index()
-    )
-
+    fee04_grouped = fee04_filtered.groupby('Student ID').apply(calculate_fee_metrics).reset_index()
+    
     logger.info(f"Processed fee metrics for {len(fee04_grouped)} students")
     return fee04_grouped
 

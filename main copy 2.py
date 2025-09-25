@@ -1,4 +1,4 @@
-from fastapi import FastAPI,UploadFile,File
+from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 import pandas as pd
 import tempfile
@@ -21,7 +21,7 @@ column_mapping = {
     'Agent Source': 'AGENT_SOURCE',
     'Agent Name': 'AGENT_NAME',
     'Student ID': 'APPLICANT_NO',
-    'FORENAME': 'FORENAME',
+    'First Name': 'FORENAME',
     'MIDDLE_NAMES':'MIDDLE_NAMES',
     'SURNAME': 'SURNAME',
     'PATHWAY_1': 'PATHWAY_1',
@@ -30,17 +30,17 @@ column_mapping = {
     'ENQUIRY_DETAIL': 'ENQUIRY_DETAIL',
 
     'ENTRY TERM': 'ENTRY_TERM',
-    'DOMICILE DESC': 'COUNTRY_OF_DOMICILE',
+    'Domicile': 'COUNTRY_OF_DOMICILE',
     'Residence_Description': 'RESIDENCY_DESCRIPTION',
-    'LEVL_CODE ': 'LEVEL',
+    'Level_Code': 'LEVEL',
     'Faculty': 'FACULTY',
-    'PROGRAM': 'PROGRAMME_NAME',
-    'PROGRAM DESCRIPTION': 'PROGRAMME_DESCRIPTION',
+    'Program_Code': 'PROGRAMME_NAME',
+    'Program_Description': 'PROGRAMME_DESCRIPTION',
     'OnCampus': 'MODE',
     'Latest Decision': 'DECISION',
     'Decision_Description': 'DECISION_DESCRIPTION',
     'Application Date': 'APPLICATION_DATE',
-    # 'Registration_Code': 'REGISTRATION_CODE',
+    'Registration_Code': 'REGISTRATION_CODE',
     'Application_Year': 'APPLICATION_YEAR',
     'PresessionalCourse': 'PRES_SESSIONAL_COURSE',
     'Summer_School': 'SUMMER_SCHOOL',
@@ -58,40 +58,26 @@ column_mapping = {
 }
 
 @app.post("/generate-report/")
-async def generate_report(
-    banner_file: UploadFile = File(...),
-    dynamics_file: UploadFile = File(...),
-    fee04_file: UploadFile = File(...)
-):
+async def generate_report():
     """
-    Generate enrolment report from Banner, Dynamics, and Fee04 Excel files.
+    Generate enrolment report from existing Banner, Dynamics, and Fee04 Excel files.
     """
     try:
-        # Save uploaded files to temporary directory
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as banner_tmp:
-            banner_path = banner_tmp.name
-            content = await banner_file.read()
-            banner_tmp.write(content)
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as dynamics_tmp:
-            dynamics_path = dynamics_tmp.name
-            content = await dynamics_file.read()
-            dynamics_tmp.write(content)
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as fee04_tmp:
-            fee04_path = fee04_tmp.name
-            content = await fee04_file.read()
-            fee04_tmp.write(content)
+        # 1️⃣ Paths to your existing files
+        banner_path = os.path.join(os.getcwd(), "banner_document.xlsx")
+        dynamics_path = os.path.join(os.getcwd(), "dynamics_document.xlsx")
+        fee04_path = os.path.join(os.getcwd(), "fee04_document.xlsx")
 
-        # Process datasets
+        # 2️⃣ Process datasets
         banner = process_banner(banner_path)
         dynamics = process_dynamics(dynamics_path)
         fee04 = process_fee04(fee04_path)
 
-        # Merge and clean
+        # 3️⃣ Merge and clean
         final_report = merge_datasets(banner, dynamics, fee04)
         final_report = clean_final_report(final_report)
 
+        # 4️⃣ Check if 'First Name', 'MIDDLE_NAMES', 'SURNAME' columns are missing, add them with default value '--'
         if 'FORENAME' not in final_report.columns:
             final_report['FORENAME'] = '--'
         
@@ -113,13 +99,8 @@ async def generate_report(
         if 'ENQUIRY_DETAIL' not in final_report.columns:
             final_report['ENQUIRY_DETAIL'] = '--'
 
-        if 'COUNTRY_OF_DOMICILE' not in final_report.columns:
-            final_report['COUNTRY_OF_DOMICILE'] = final_report['DOMICILE DESC']
-        if 'LEVEL' not in final_report.columns:
-            final_report['LEVEL'] = final_report['LEVL_CODE']
 
 
-        final_report.columns = final_report.columns.str.strip()
         # 5️⃣ Rename the columns based on the mapping
         final_report.rename(columns=column_mapping, inplace=True)
 
@@ -135,6 +116,7 @@ async def generate_report(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             filename="final_enrolment_report.xlsx",
         )
+
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})

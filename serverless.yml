@@ -1,0 +1,26 @@
+service: file-merger-lambda
+
+provider:
+  name: aws
+  runtime: python3.9
+  region: us-east-1
+  environment:
+    S3_BUCKET: ${env:S3_BUCKET_NAME}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource:
+        - "arn:aws:s3:::${env:S3_BUCKET_NAME}/*"
+
+functions:
+  fileMerger:
+    handler: lambda_function.lambda_handler
+    timeout: 300
+    events:
+      - http:
+          path: merge-files
+          method: post
+          cors: true
