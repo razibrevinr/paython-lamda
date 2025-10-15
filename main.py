@@ -47,7 +47,7 @@ column_mapping = {
     "RESD_DESC": "RESIDENCY_DESCRIPTION",
     "LEVL_CODE": "LEVEL",
     "FACULTY NAME": "FACULTY",
-    "PROGRAM": "PROGRAMME_NAME",
+    "PROGRAM": "PROGRAMME_CODE",
     "PROGRAM DESCRIPTION": "PROGRAMME_NAME",
     "OnCampus": "MODE",
     "LATEST DECISION": "DECISION",
@@ -124,13 +124,64 @@ def extract_academic_year(dt_series: pd.Series) -> pd.Series:
     end = start + 1
     return pd.Series([f"{int(a)}-{str(int(b))[-2:]}" if not pd.isna(a) else np.nan for a, b in zip(start, end)], index=dt_series.index)
 
+# def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = None) -> pd.DataFrame:
+#     logger.info(f"Loading {os.path.basename(file_path)}")
+#     head = pd.read_excel(file_path, engine="openpyxl", nrows=5)
+#     available = head.columns.tolist()
+#     kept_cols = [c for c in usecols if c in available]
+#     df = pd.read_excel(file_path, engine="openpyxl", usecols=kept_cols)
+
+#     if dtype_map:
+#         for col, dt in dtype_map.items():
+#             if col not in df.columns:
+#                 continue
+#             try:
+#                 if dt == "Int32":
+#                     df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
+#                 elif dt == "int32":
+#                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int32")
+#                 elif dt == "float32":
+#                     df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
+#                 elif dt in ("string", "str", "object"):
+#                     df[col] = as_string(df[col])
+#                 elif dt == "category":
+#                     # Defer true category; keep as string for safe writes
+#                     df[col] = as_string(df[col])
+#                 else:
+#                     df[col] = df[col].astype(dt)
+#             except Exception:
+#                 # fallback heuristics
+#                 if "int" in str(dt).lower():
+#                     df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
+#                 elif "float" in str(dt).lower():
+#                     df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
+#                 else:
+#                     df[col] = as_string(df[col])
+
+#     # Ensure requested columns exist
+#     missing = set(usecols) - set(df.columns)
+#     for c in missing:
+#         df[c] = pd.Series(["--"] * len(df))
+#     return reduce_memory_usage(df)
+
 def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = None) -> pd.DataFrame:
     logger.info(f"Loading {os.path.basename(file_path)}")
+    
+    # Read the first 5 rows to inspect the columns
     head = pd.read_excel(file_path, engine="openpyxl", nrows=5)
+    logger.info(f"Columns in file: {head.columns.tolist()}")
+    
     available = head.columns.tolist()
     kept_cols = [c for c in usecols if c in available]
+    
+    logger.info(f"Columns being used for loading: {kept_cols}")
+    
+    # Now load the entire file with only the kept columns
     df = pd.read_excel(file_path, engine="openpyxl", usecols=kept_cols)
-
+    
+    # Log the first few rows to check data content
+    logger.info(f"First few rows of the loaded file: \n{df.head()}")
+    
     if dtype_map:
         for col, dt in dtype_map.items():
             if col not in df.columns:
@@ -145,12 +196,12 @@ def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = Non
                 elif dt in ("string", "str", "object"):
                     df[col] = as_string(df[col])
                 elif dt == "category":
-                    # Defer true category; keep as string for safe writes
                     df[col] = as_string(df[col])
                 else:
                     df[col] = df[col].astype(dt)
-            except Exception:
+            except Exception as e:
                 # fallback heuristics
+                logger.error(f"Error converting {col} to {dt}: {e}")
                 if "int" in str(dt).lower():
                     df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
                 elif "float" in str(dt).lower():
@@ -162,7 +213,12 @@ def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = Non
     missing = set(usecols) - set(df.columns)
     for c in missing:
         df[c] = pd.Series(["--"] * len(df))
+        
+    # Check the DataFrame after all operations
+    logger.info(f"Data after all operations: \n{df.head()}")
+    
     return reduce_memory_usage(df)
+
 
 # ---------------------------
 # Cleaning / Processing
@@ -319,7 +375,46 @@ def process_dynamics(dynamics_path: str) -> pd.DataFrame:
     logger.info(f"Dynamics records after dedupe: {len(dynamics_df)}")
     return dynamics_df.reset_index(drop=True)
 
+# def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
+#     tuition_mask = (
+#         (group["Fee Type(T)"] == "Tuition Fees") &
+#         (group["Sponsor Code"] == "SELF") &
+#         (group["Sponsor Code(T)"] == "Self")
+#     )
+#     tuition = group.loc[tuition_mask, "Original Transaction Value"].max()
+
+#     scholarship_mask = (
+#         (group["Fee Type(T)"] == "Tuition Fees") &
+#         (group["Sponsor Code"] == "DET") &
+#         (group["Sponsor Code(T)"] == "Tuition Fee Reduction")
+#     )
+#     scholarship = group.loc[scholarship_mask, "Original Transaction Value"].max()
+
+#     scholarship_abs = 0.0 if pd.isna(scholarship) else abs(float(scholarship))
+#     tuition_val = float(tuition) if pd.notna(tuition) else 0.0
+#     commissionable = max(tuition_val - scholarship_abs, 0.0)
+
+#     logger.info(f"Tuition mask sum: {tuition_mask.sum()}")  # Check how many rows match the tuition mask
+#     logger.info(f"Scholarship mask sum: {scholarship_mask.sum()}")  # Check how many rows match the scholarship mask
+
+
+#     pres_mask = (
+#         group["Programme"].isin(PRE_SESSIONAL_PROGRAM_CODES) &
+#         (group["Fee Type(T)"] == "Pre-Sessional Fee Deposit") &
+#         (group["Sponsor Code"] == "SELF")
+#     )
+#     pres_fee = group.loc[pres_mask, "Original Transaction Value"].max()
+
+#     return pd.Series({
+#         "Tuition_Fees": tuition_val if tuition_val != 0 else np.nan,
+#         "Scholarship_Discount": scholarship_abs if scholarship_abs != 0 else np.nan,
+#         "Commissionable_Amount": commissionable if commissionable != 0 else np.nan,
+#         "Presessional_Fee": float(pres_fee) if pd.notna(pres_fee) else np.nan
+#     })
+
+
 def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
+    # Mask for tuition
     tuition_mask = (
         (group["Fee Type(T)"] == "Tuition Fees") &
         (group["Sponsor Code"] == "SELF") &
@@ -327,6 +422,7 @@ def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
     )
     tuition = group.loc[tuition_mask, "Original Transaction Value"].max()
 
+    # Mask for scholarship
     scholarship_mask = (
         (group["Fee Type(T)"] == "Tuition Fees") &
         (group["Sponsor Code"] == "DET") &
@@ -334,10 +430,17 @@ def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
     )
     scholarship = group.loc[scholarship_mask, "Original Transaction Value"].max()
 
+    # Calculate absolute scholarship and commissionable amount
     scholarship_abs = 0.0 if pd.isna(scholarship) else abs(float(scholarship))
     tuition_val = float(tuition) if pd.notna(tuition) else 0.0
     commissionable = max(tuition_val - scholarship_abs, 0.0)
 
+    # Logging for debugging
+    logger.info(f"Tuition mask sum: {tuition_mask.sum()}")
+    logger.info(f"Scholarship mask sum: {scholarship_mask.sum()}")
+    logger.info(f"tuition_val: {tuition_val}, scholarship_abs: {scholarship_abs}, commissionable: {commissionable}")
+
+    # Presessional Fee Mask
     pres_mask = (
         group["Programme"].isin(PRE_SESSIONAL_PROGRAM_CODES) &
         (group["Fee Type(T)"] == "Pre-Sessional Fee Deposit") &
@@ -351,7 +454,6 @@ def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
         "Commissionable_Amount": commissionable if commissionable != 0 else np.nan,
         "Presessional_Fee": float(pres_fee) if pd.notna(pres_fee) else np.nan
     })
-
 def process_fee04(fee04_path: str) -> pd.DataFrame:
     logger.info("Processing Fee04…")
     usecols = [
@@ -371,6 +473,9 @@ def process_fee04(fee04_path: str) -> pd.DataFrame:
         "Study Level(T)": "string",
     }
     fee = load_large_excel(fee04_path, usecols, dtype_map)
+
+    logger.info(f"Filtered Fee04 rowstesddd")
+
     if "Enrolment Status" in fee.columns:
         fee = fee[fee["Enrolment Status"] == "EN"]
     logger.info(f"Filtered Fee04 rows: {len(fee)}")
@@ -379,7 +484,9 @@ def process_fee04(fee04_path: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["Student ID", "Tuition_Fees", "Scholarship_Discount", "Commissionable_Amount", "Presessional_Fee"])
 
     # Silence FutureWarning by applying on a subset (exclude grouping key)
+
     needed = ["Original Transaction Value", "Fee Type(T)", "Sponsor Code", "Sponsor Code(T)", "Programme"]
+    logger.info(f"Processed fee metrics for")
     grouped = fee.groupby("Student ID", group_keys=False)[needed].apply(calculate_fee_metrics).reset_index()
     logger.info(f"Processed fee metrics for {len(grouped)} students")
     return grouped
