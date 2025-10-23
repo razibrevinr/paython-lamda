@@ -8,9 +8,7 @@ import logging
 from typing import Optional
 import requests
 import re
-from pandas.api.types import (
-    is_categorical_dtype, is_integer_dtype, is_float_dtype, is_object_dtype
-)
+from pandas.api.types import is_categorical_dtype, is_integer_dtype, is_float_dtype, is_object_dtype
 
 # ---------------------------
 # Logging
@@ -27,151 +25,75 @@ logger = logging.getLogger("enrolment-report")
 PRE_SESSIONAL_PROGRAM_CODES = [4287, 4291, 8383, 8384, 8454, 8802, 8809, 8810, 8811, 8332]
 SUMMER_SCHOOL_PROGRAM_CODES = [9541, 9544, 9546, 9547]
 
-# Old -> Final headers
 column_mapping = {
     "AGENCY CODE": "AGENT_CODE",
     "Agent Source": "AGENT_SOURCE",
     "AGENCY NAME": "AGENT_NAME",
     "Student ID": "APPLICANT_NO",
-
     "FORENAME": "FORENAME",
     "MIDDLE_NAMES": "MIDDLE_NAMES",
     "SURNAME": "SURNAME",
-    "PATHWAY_1": "PATHWAY_1",
-    "PATHWAY_2": "PATHWAY_2",
-    "SCHOOL_NAME": "SCHOOL_NAME",
-    "ENQUIRY_DETAIL": "ENQUIRY_DETAIL",
-
     "ENTRY TERM": "ENTRY_TERM",
     "DOMICILE DESC": "COUNTRY_OF_DOMICILE",
     "RESD_DESC": "RESIDENCY_DESCRIPTION",
     "LEVL_CODE": "LEVEL",
-    "FACULTY NAME": "FACULTY",
     "PROGRAM": "PROGRAMME_CODE",
     "PROGRAM DESCRIPTION": "PROGRAMME_NAME",
     "OnCampus": "MODE",
     "LATEST DECISION": "DECISION",
-    "APDC DESC2": "DECISION_DESCRIPTION",
     "APPLICATION DATE": "APPLICATION_DATE",
     "Application_Year": "APPLICATION_YEAR",
     "PresessionalCourse": "PRES_SESSIONAL_COURSE",
     "Summer_School": "SUMMER_SCHOOL",
-    "Pathway": "PATHWAY",
-    "Agent_Code_Post_App": "AGENT_CODE_POST_APP",
-    "Post_App_Agent": "POST_APP_AGENT",
     "Tuition_Fees": "TUITION_FEE",
     "Scholarship_Discount": "SCHOLARSHIP",
     "Commissionable_Amount": "COMMISSIONABLE_AMOUNT",
     "Presessional_Fee": "PRES_SESSIONAL_FEE",
-    "DECISION DATE": "DECISION_DATE",
-    "Last Institution Code": "LAST_INSTITUTION_CODE",
-    "ESTS CODE": "ESTS_CODE",
-    "ESTS DESC": "ESTS_DESC",
 }
 
-# Final columns that must never end as blank placeholders unintentionally
 NEVER_PLACEHOLDER_COLS = ["AGENT_CODE", "AGENT_SOURCE", "AGENT_NAME", "RESIDENCY_DESCRIPTION"]
 
-# ---------------------------
-# Helpers: robust string casting
-# ---------------------------
+# Helper: Normalize column names
+def _norm(s: str) -> str:
+    s = str(s).strip()
+    s = re.sub(r'[\s_]+', ' ', s)  # Replace spaces and underscores with single space
+    return s.casefold()  # Convert to lowercase for case-insensitive matching
+
+# Helper: Convert to string safely
 def as_string(s: pd.Series) -> pd.Series:
-    """
-    Cast a Series to a string-like dtype. Uses pandas 'string' if available,
-    otherwise falls back to Python str (object dtype). Never raises TypeError.
-    """
     try:
         return s.astype("string")
     except (TypeError, ValueError):
         return s.astype(str)
 
+# Helper: Check for blank values (NaN, empty string, or '--')
+def _is_blank_series(s: pd.Series) -> pd.Series:
+    s2 = as_string(s)
+    return s2.isna() | s2.str.strip().eq("") | s2.str.strip().eq("--")
+
+# Helper: Convert list of values to string series
 def to_string_series(values, index=None) -> pd.Series:
+    """
+    Convert a list of values to a pandas Series of string type.
+    It is a helper function to ensure that the values are consistently cast to strings.
+    """
     ser = pd.Series(values, index=index)
     return as_string(ser)
-
 # ---------------------------
-# Utils
-# ---------------------------
-def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
-    start_mem = df.memory_usage(deep=True).sum() / 1024**2
-    for col in df.columns:
-        col_type = df[col].dtype
-        try:
-            if is_integer_dtype(col_type):
-                df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
-            elif is_float_dtype(col_type):
-                df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
-            elif is_object_dtype(col_type):
-                # Defer category; do not auto-shrink to category yet
-                pass
-        except Exception:
-            pass
-    end_mem = df.memory_usage(deep=True).sum() / 1024**2
-    if start_mem > 0:
-        logger.info(f"Memory reduced by {start_mem - end_mem:.2f} MB ({(1 - end_mem / start_mem):.1%})")
-    return df
-
-def extract_academic_year(dt_series: pd.Series) -> pd.Series:
-    s = pd.to_datetime(dt_series, errors="coerce")
-    year = s.dt.year
-    month = s.dt.month
-    start = np.where(month >= 8, year, year - 1)
-    end = start + 1
-    return pd.Series([f"{int(a)}-{str(int(b))[-2:]}" if not pd.isna(a) else np.nan for a, b in zip(start, end)], index=dt_series.index)
-
-def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = None) -> pd.DataFrame:
-    logger.info(f"Loading {os.path.basename(file_path)}")
-    head = pd.read_excel(file_path, engine="openpyxl", nrows=5)
-    logger.info(f"Columns in file: {head.columns.tolist()}")
-
-    available = head.columns.tolist()
-    kept_cols = [c for c in usecols if c in available]
-
-    logger.info(f"Columns being used for loading: {kept_cols}")
-    df = pd.read_excel(file_path, engine="openpyxl", usecols=kept_cols)
-
-    logger.info(f"First few rows of the loaded file: \n{df.head()}")
-
-    if dtype_map:
-        for col, dt in dtype_map.items():
-            if col not in df.columns:
-                continue
-            try:
-                if dt == "Int32":
-                    df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
-                elif dt == "int32":
-                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int32")
-                elif dt == "float32":
-                    df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
-                elif dt in ("string", "str", "object"):
-                    df[col] = as_string(df[col])
-                elif dt == "category":
-                    df[col] = as_string(df[col])
-                else:
-                    df[col] = df[col].astype(dt)
-            except Exception as e:
-                logger.error(f"Error converting {col} to {dt}: {e}")
-                if "int" in str(dt).lower():
-                    df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
-                elif "float" in str(dt).lower():
-                    df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
-                else:
-                    df[col] = as_string(df[col])
-
-    # Ensure requested columns exist
-    missing = set(usecols) - set(df.columns)
-    for c in missing:
-        df[c] = pd.Series(["--"] * len(df))
-
-    logger.info(f"Data after all operations: \n{df.head()}")
-    return reduce_memory_usage(df)
-
-# ---------------------------
-# Cleaning / Processing
+# Clean final report function
 # ---------------------------
 def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build clean enrolment fields on string dtype (no early categoricals).
+    - Creates Student ID from ID (nullable Int32)
+    - Derives AGENT_CODE from AGENCY CODE or Agent_Code_Agency_Assisting_Application
+    - Derives AGENT_NAME from AGENCY NAME or Agency_Assisting_Application
+    - Copies Agent Source -> AGENT_SOURCE (if present)
+    - Fills COUNTRY_OF_DOMICILE from DOMICILE DESC if missing
+    - Fills RESIDENCY_DESCRIPTION from RESD_DESC (or Residence_Description) if missing
+    - Normalises LEVEL (PC->PGT, PR->PGR) on string dtype
+    - Drops only helper/source columns
+    - Reorders key identity columns first
     """
     df = df.copy()
     logger.info("Cleaning final report…")
@@ -240,6 +162,69 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     logger.info("Final report cleaned.")
     return df
 
+
+
+def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
+    start_mem = df.memory_usage(deep=True).sum() / 1024**2
+    for col in df.columns:
+        col_type = df[col].dtype
+        try:
+            if is_integer_dtype(col_type):
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
+            elif is_float_dtype(col_type):
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
+            elif is_object_dtype(col_type):
+                pass
+        except Exception:
+            pass
+    end_mem = df.memory_usage(deep=True).sum() / 1024**2
+    if start_mem > 0:
+        logger.info(f"Memory reduced by {start_mem - end_mem:.2f} MB ({(1 - end_mem / start_mem):.1%})")
+    return df
+
+def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = None) -> pd.DataFrame:
+    logger.info(f"Loading {os.path.basename(file_path)}")
+    head = pd.read_excel(file_path, engine="openpyxl", nrows=5)
+    available = head.columns.tolist()
+    kept_cols = [c for c in usecols if c in available]
+    logger.info(f"Columns being used for loading: {kept_cols}")
+    df = pd.read_excel(file_path, engine="openpyxl", usecols=kept_cols)
+    logger.info(f"First few rows of the loaded file: \n{df.head()}")
+    if dtype_map:
+        for col, dt in dtype_map.items():
+            if col not in df.columns:
+                continue
+            try:
+                if dt == "Int32":
+                    df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
+                elif dt == "float32":
+                    df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
+                elif dt in ("string", "str", "object"):
+                    df[col] = as_string(df[col])
+            except Exception as e:
+                logger.error(f"Error converting {col} to {dt}: {e}")
+    return reduce_memory_usage(df)
+
+# ---------------------------
+# Extract academic year based on APPLICATION DATE
+# ---------------------------
+def extract_academic_year(dt_series: pd.Series) -> pd.Series:
+    """
+    Given a series of application dates, this function extracts the academic year.
+    The academic year is calculated as follows:
+    - If the month is August or later, the academic year starts in the current year and ends the next year.
+    - If the month is earlier than August, the academic year starts the previous year and ends in the current year.
+    """
+    s = pd.to_datetime(dt_series, errors="coerce")
+    year = s.dt.year
+    month = s.dt.month
+    start = np.where(month >= 8, year, year - 1)
+    end = start + 1
+    return pd.Series([f"{int(a)}-{str(int(b))[-2:]}" if not pd.isna(a) else np.nan for a, b in zip(start, end)], index=dt_series.index)
+
+# ---------------------------
+# Banner Data Processing
+# ---------------------------
 def process_banner(banner_path: str) -> pd.DataFrame:
     logger.info("Processing Banner…")
     usecols = [
@@ -270,13 +255,17 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         "RESD_DESC": "string"
     }
     banner_df = load_large_excel(banner_path, usecols, dtype_map)
+    
+    # Adding the academic year column
     for dcol in ["APPLICATION DATE", "DECISION DATE"]:
         if dcol in banner_df.columns:
             banner_df[dcol] = pd.to_datetime(banner_df[dcol], errors="coerce")
+    
     if "APPLICATION DATE" in banner_df.columns:
         banner_df["Application_Year"] = extract_academic_year(banner_df["APPLICATION DATE"])
     else:
         banner_df["Application_Year"] = np.nan
+
     if "PROGRAM" in banner_df.columns:
         presessional_mask = banner_df["PROGRAM"].isin(PRE_SESSIONAL_PROGRAM_CODES)
         summer_mask = banner_df["PROGRAM"].isin(SUMMER_SCHOOL_PROGRAM_CODES)
@@ -285,10 +274,12 @@ def process_banner(banner_path: str) -> pd.DataFrame:
     else:
         banner_df["PresessionalCourse"] = "--"
         banner_df["Summer_School"] = "--"
+
     if "OnCampus" in banner_df.columns:
         banner_df["Pathway"] = np.where(banner_df["OnCampus"].astype(str) == "Y", "CEG", "")
     else:
         banner_df["Pathway"] = ""
+
     logger.info(f"Banner records loaded: {len(banner_df)}")
     return banner_df.reset_index(drop=True)
 
@@ -311,138 +302,83 @@ def process_dynamics(dynamics_path: str) -> pd.DataFrame:
     logger.info(f"Dynamics records after dedupe: {len(dynamics_df)}")
     return dynamics_df.reset_index(drop=True)
 
+
 # ---------------------------
-# New robust text normalizer & constants for Fee04 logic
+# Fee Processing
 # ---------------------------
-def _norm_txt(s: pd.Series) -> pd.Series:
-    return as_string(s).str.strip().str.casefold().fillna("")
-
-SELF_CODES = {"self", "self-funded", "self funded", "selffunded"}
-TUITION_KEY = "tuition"
-SCHOLARSHIP_KEY = "tuition fee reduction"
-
-def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
-    # Normalize text once
-    fee_type     = _norm_txt(group["Fee Type(T)"])                 # e.g., "tuition fees"
-    sponsor_code = _norm_txt(group["Sponsor Code"])                # e.g., "self"
-    sponsor_t    = _norm_txt(group["Sponsor Code(T)"])             # e.g., "self-funded"
-    # tx_type optional, kept for future logic if needed
-    # tx_type      = _norm_txt(group.get("Transaction Type", ""))  # noqa: F841
-
-    # Numeric value
-    val = pd.to_numeric(group["Original Transaction Value"], errors="coerce")
-
-    # ------- TUITION -------
-    tuition_mask = fee_type.str.contains(TUITION_KEY)
-    self_mask = sponsor_code.isin(SELF_CODES) | sponsor_t.isin(SELF_CODES)
-
-    tu_mask_primary = tuition_mask & self_mask
-    tu_mask_fallback = tuition_mask
-
-    tuition_candidates = group.loc[tu_mask_primary, "Original Transaction Value"].astype(float)
-    if tuition_candidates.empty:
-        tuition_candidates = group.loc[tu_mask_fallback, "Original Transaction Value"].astype(float)
-
-    tuition_val = np.nan
-    if not tuition_candidates.empty:
-        pos = tuition_candidates[tuition_candidates > 0]
-        tuition_val = pos.max() if not pos.empty else tuition_candidates.abs().max()
-
-    # ------- SCHOLARSHIP (discount) -------
-    scholarship_mask = (sponsor_code == "det") & (sponsor_t.str.contains(SCHOLARSHIP_KEY))
-    scholarship_vals = group.loc[scholarship_mask, "Original Transaction Value"].astype(float)
-    scholarship_abs = scholarship_vals.abs().max() if not scholarship_vals.empty else np.nan
-
-    # ------- COMMISSIONABLE -------
-    if pd.notna(tuition_val):
-        if pd.notna(scholarship_abs):
-            commissionable = max(float(tuition_val) - float(scholarship_abs), 0.0)
-        else:
-            commissionable = float(tuition_val)
-    else:
-        commissionable = np.nan
-
-    # ------- PRE-SESSIONAL FEE -------
-    prog = pd.to_numeric(group.get("Programme", np.nan), errors="coerce")
-    prog_mask = prog.isin(PRE_SESSIONAL_PROGRAM_CODES)
-    pres_type = _norm_txt(group["Fee Type(T)"]).eq("pre-sessional fee deposit")
-    pres_self = sponsor_code.isin(SELF_CODES)
-    pres_mask = prog_mask & pres_type & pres_self
-
-    pres_vals = group.loc[pres_mask, "Original Transaction Value"].astype(float)
-    pres_fee = pres_vals.max() if not pres_vals.empty else np.nan
-
-    return pd.Series({
-        "Tuition_Fees": tuition_val if pd.notna(tuition_val) else np.nan,
-        "Scholarship_Discount": scholarship_abs if pd.notna(scholarship_abs) else np.nan,
-        "Commissionable_Amount": commissionable if pd.notna(commissionable) else np.nan,
-        "Presessional_Fee": pres_fee if pd.notna(pres_fee) else np.nan,
-    })
-
 def process_fee04(fee04_path: str) -> pd.DataFrame:
     logger.info("Processing Fee04…")
-    usecols = [
-        "Student ID", "Transaction Type", "Sponsor Code",
-        "Enrolment Status", "Original Transaction Value",
-        "Fee Type(T)", "Sponsor Code(T)", "Programme", "Study Level(T)"
-    ]
+    usecols = ["Student ID", "Transaction Type", "Sponsor Code", "Enrolment Status", "Original Transaction Value", "Fee Type(T)", "Sponsor Code(T)", "Programme"]
     dtype_map = {
-        "Student ID": "Int32",
-        "Transaction Type": "string",
-        "Sponsor Code": "string",
-        "Enrolment Status": "string",
-        "Original Transaction Value": "float32",
-        "Fee Type(T)": "string",
-        "Sponsor Code(T)": "string",
-        "Programme": "Int32",
-        "Study Level(T)": "string",
+        "Student ID": "Int32", "Transaction Type": "string", "Sponsor Code": "string", "Enrolment Status": "string", 
+        "Original Transaction Value": "float32", "Fee Type(T)": "string", "Sponsor Code(T)": "string", "Programme": "Int32"
     }
     fee = load_large_excel(fee04_path, usecols, dtype_map)
-
-    # Keep only enrolled
     if "Enrolment Status" in fee.columns:
-        fee = fee[_norm_txt(fee["Enrolment Status"]).eq("en")]
-
-    logger.info(f"Filtered Fee04 rows: {len(fee)}")
+        fee = fee[fee["Enrolment Status"] == "EN"]
     if fee.empty or "Student ID" not in fee.columns:
         logger.warning("No Fee04 records after filtering or missing Student ID.")
         return pd.DataFrame(columns=["Student ID", "Tuition_Fees", "Scholarship_Discount", "Commissionable_Amount", "Presessional_Fee"])
-
-    needed_cols = ["Original Transaction Value", "Fee Type(T)", "Sponsor Code", "Sponsor Code(T)", "Programme", "Transaction Type"]
-    grouped = fee.groupby("Student ID", group_keys=False)[needed_cols].apply(calculate_fee_metrics).reset_index()
+    needed = ["Original Transaction Value", "Fee Type(T)", "Sponsor Code", "Sponsor Code(T)", "Programme"]
+    grouped = fee.groupby("Student ID", group_keys=False)[needed].apply(calculate_fee_metrics).reset_index()
     logger.info(f"Processed fee metrics for {len(grouped)} students")
     return grouped
 
+def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
+    tuition_mask = (group["Fee Type(T)"] == "Tuition Fees") & (group["Sponsor Code"] == "SELF") & (group["Sponsor Code(T)"] == "Self")
+    tuition = group.loc[tuition_mask, "Original Transaction Value"].max()
+    
+    scholarship_mask = (group["Fee Type(T)"] == "Tuition Fees") & (group["Sponsor Code"] == "DET") & (group["Sponsor Code(T)"] == "Tuition Fee Reduction")
+    scholarship = group.loc[scholarship_mask, "Original Transaction Value"].max()
+    
+    scholarship_abs = 0.0 if pd.isna(scholarship) else abs(float(scholarship))
+    tuition_val = float(tuition) if pd.notna(tuition) else 0.0
+    commissionable = max(tuition_val - scholarship_abs, 0.0)
+    
+    # Presessional Fee Mask
+    pres_mask = (group["Programme"].isin(PRE_SESSIONAL_PROGRAM_CODES)) & (group["Fee Type(T)"] == "Pre-Sessional Fee Deposit") & (group["Sponsor Code"] == "SELF")
+    pres_fee = group.loc[pres_mask, "Original Transaction Value"].max()
+
+    return pd.Series({
+        "Tuition_Fees": tuition_val if tuition_val != 0 else np.nan,
+        "Scholarship_Discount": scholarship_abs if scholarship_abs != 0 else np.nan,
+        "Commissionable_Amount": commissionable if commissionable != 0 else np.nan,
+        "Presessional_Fee": float(pres_fee) if pd.notna(pres_fee) else np.nan
+    })
+
+# ---------------------------
+# Merging Datasets
+# ---------------------------
 def merge_datasets(banner: pd.DataFrame, dynamics: pd.DataFrame, fee04: pd.DataFrame) -> pd.DataFrame:
     logger.info("Merging datasets…")
-    merged = pd.merge(banner, dynamics, left_on="ID", right_on="Banner ID", how="left")
-    final = pd.merge(merged, fee04, left_on="ID", right_on="Student ID", how="left")
-    final.drop(["Banner ID", "Student ID"], axis=1, errors="ignore", inplace=True)
+    
+    # Merge Banner and Dynamics data using 'inner' join to ensure matching rows based on ID -> Banner ID
+    merged = pd.merge(banner, dynamics, left_on="ID", right_on="Banner ID", how="inner")
+    
+    # Merge Fee04 data with the merged dataset using 'inner' join based on ID -> Student ID
+    final = pd.merge(merged, fee04, left_on="ID", right_on="Student ID", how="inner")
+    
+    # After the merge, ensure that the ID, Banner ID, and Student ID are strictly equal
+    final = final[final["ID"] == final["Banner ID"]]
+    final = final[final["ID"] == final["Student ID"]]
 
-    # ⚠️ Do NOT fill with 0 here; keep NaN to detect truly missing matches
-    # for col in ["Tuition_Fees", "Scholarship_Discount", "Commissionable_Amount", "Presessional_Fee"]:
-    #     if col in final.columns:
-    #         final[col] = final[col].fillna(0)
+    # Drop any irrelevant columns like Banner ID and Student ID (if necessary)
+    final.drop(["Banner ID", "Student ID"], axis=1, errors="ignore", inplace=True)
+    
+    # Fill missing values with 0 for columns like Tuition_Fees, Scholarship_Discount, etc.
+    for col in ["Tuition_Fees", "Scholarship_Discount", "Commissionable_Amount", "Presessional_Fee"]:
+        if col in final.columns:
+            final[col] = final[col].fillna(0)
 
     logger.info(f"Final merged records: {len(final)}")
     return final
 
-# ---------------------------
-# Column mapping + placeholders (categorical-safe)
-# ---------------------------
-def _norm(s: str) -> str:
-    s = str(s).strip()
-    s = re.sub(r'[\s_]+', ' ', s)
-    return s.casefold()
-
-def _is_blank_series(s: pd.Series) -> pd.Series:
-    s2 = as_string(s)
-    return s2.isna() | s2.str.strip().eq("") | s2.str.strip().eq("--")
 
 def apply_column_mapping_safe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.astype(str).str.strip()
 
+    # Normalize column names
     col_by_norm = {_norm(c): c for c in df.columns}
 
     for src, dst in column_mapping.items():
@@ -496,10 +432,6 @@ def enforce_no_placeholder(df: pd.DataFrame, cols: list[str], placeholder: str="
             df[c] = df[c].astype("category")
     return df
 
-# ---------------------------
-# FastAPI
-# ---------------------------
-app = FastAPI(title="Enrolment Report API")
 
 def _do_generate_and_callback(
     banner_path: str,
@@ -587,9 +519,11 @@ def _do_generate_and_callback(
             except Exception:
                 pass
 
-@app.get("/")
-async def root():
-    return {"message": "Enrolment Report API is running."}
+
+# ---------------------------
+# FastAPI Endpoints
+# ---------------------------
+app = FastAPI(title="Enrolment Report API")
 
 @app.post("/generate-report-async")
 async def generate_report_async(
@@ -626,3 +560,8 @@ async def generate_report_async(
         b_path, d_path, f_path, callback_url, callback_token, passthrough
     )
     return JSONResponse(status_code=202, content={"status": "accepted"})
+
+# Define to_string_series function
+
+
+
