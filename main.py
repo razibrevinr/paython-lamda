@@ -400,8 +400,8 @@ def process_fee04(fee04_path: str) -> pd.DataFrame:
     fee = load_large_excel(fee04_path, usecols, dtype_map)
 
     # Keep only enrolled
-    if "Enrolment Status" in fee.columns:
-        fee = fee[_norm_txt(fee["Enrolment Status"]).eq("en")]
+    # if "Enrolment Status" in fee.columns:
+    #     fee = fee[_norm_txt(fee["Enrolment Status"]).eq("en")]
 
     logger.info(f"Filtered Fee04 rows: {len(fee)}")
     if fee.empty or "Student ID" not in fee.columns:
