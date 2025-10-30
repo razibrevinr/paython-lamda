@@ -203,7 +203,7 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     # ---- Ensure existence of common text columns
     for col in ["FORENAME", "MIDDLE_NAMES", "SURNAME", "PATHWAY_1", "PATHWAY_2", "SCHOOL_NAME", "ENQUIRY_DETAIL"]:
         if col not in df.columns:
-            df.loc[:, col] = "--"
+            df.loc[:, col] = ""
 
     # ---- COUNTRY_OF_DOMICILE
     if "COUNTRY_OF_DOMICILE" not in df.columns and "DOMICILE DESC" in df.columns:
