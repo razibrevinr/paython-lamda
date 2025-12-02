@@ -198,9 +198,12 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
 
     # ---- AGENT_CODE
     ac_banner = as_string(df.get("AGENCY CODE", pd.Series([pd.NA] * len(df), index=df.index)))
-    ac_dyn    = as_string(df.get("Agent_Code_Agency_Assisting_Application", pd.Series([""] * len(df), index=df.index)))
-    agent_code = np.where(ac_banner.str.len().fillna(0) > 0, ac_banner,
-                          np.where(ac_dyn.str.len().fillna(0) > 0, ac_dyn, pd.NA))
+    ac_dyn = as_string(df.get("Agent_Code_Agency_Assisting_Application", pd.Series([""] * len(df), index=df.index)))
+    agent_code = np.where(
+        ac_banner.str.len().fillna(0) > 0,
+        ac_banner,
+        np.where(ac_dyn.str.len().fillna(0) > 0, ac_dyn, pd.NA),
+    )
     df.loc[:, "AGENT_CODE"] = to_string_series(agent_code, index=df.index)
 
     # ---- AGENT_SOURCE
@@ -209,22 +212,36 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
 
     # ---- AGENT_NAME
     an_banner = as_string(df.get("AGENCY NAME", pd.Series([pd.NA] * len(df), index=df.index)))
-    an_dyn    = as_string(df.get("Agency_Assisting_Application", pd.Series([pd.NA] * len(df), index=df.index)))
-    agent_name = np.where(an_banner.str.len().fillna(0) > 0, an_banner,
-                          np.where(an_dyn.str.len().fillna(0) > 0, an_dyn, ""))
+    an_dyn = as_string(df.get("Agency_Assisting_Application", pd.Series([pd.NA] * len(df), index=df.index)))
+    agent_name = np.where(
+        an_banner.str.len().fillna(0) > 0,
+        an_banner,
+        np.where(an_dyn.str.len().fillna(0) > 0, an_dyn, ""),
+    )
     df.loc[:, "AGENT_NAME"] = to_string_series(agent_name, index=df.index)
 
-
-     ucas_id_banner = as_string(df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index)))
-    ucas_id_dyn    = as_string(df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index)))
-
-    ucas_id = np.where(ucas_id_banner.str.len().fillna(0) > 0, ucas_id_banner,
-                          np.where(ucas_id_dyn.str.len().fillna(0) > 0, ucas_id_dyn, ""))
-                          
+    # ---- UCAS_ID
+    # (Right now both sources are the same column; this still safely normalises it)
+    ucas_id_banner = as_string(df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index)))
+    ucas_id_dyn = as_string(df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index)))
+    ucas_id = np.where(
+        ucas_id_banner.str.len().fillna(0) > 0,
+        ucas_id_banner,
+        np.where(ucas_id_dyn.str.len().fillna(0) > 0, ucas_id_dyn, ""),
+    )
     df.loc[:, "UCAS_ID"] = to_string_series(ucas_id, index=df.index)
 
     # ---- Ensure existence of common text columns
-    for col in ["FORENAME", "MIDDLE_NAMES", "SURNAME", "PATHWAY_1", "PATHWAY_2", "SCHOOL_NAME", "ENQUIRY_DETAIL", "UCAS_ID"]:
+    for col in [
+        "FORENAME",
+        "MIDDLE_NAMES",
+        "SURNAME",
+        "PATHWAY_1",
+        "PATHWAY_2",
+        "SCHOOL_NAME",
+        "ENQUIRY_DETAIL",
+        "UCAS_ID",
+    ]:
         if col not in df.columns:
             df.loc[:, col] = ""
 
@@ -254,10 +271,16 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     # ---- Drop helpers
     df.drop(
         [
-            "AGENCY CODE", "AGENCY NAME", "Agent Source",
-            "Agent_Code_Agency_Assisting_Application", "Agency_Assisting_Application","Residence_Description"
+            "AGENCY CODE",
+            "AGENCY NAME",
+            "Agent Source",
+            "Agent_Code_Agency_Assisting_Application",
+            "Agency_Assisting_Application",
+            "Residence_Description",
         ],
-        axis=1, errors="ignore", inplace=True
+        axis=1,
+        errors="ignore",
+        inplace=True,
     )
 
     logger.info("Final report cleaned.")
@@ -307,8 +330,8 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         banner_df["PresessionalCourse"] = np.where(presessional_mask, "Y", "N")
         banner_df["Summer_School"] = np.where(summer_mask, "Y", "N")
     else:
-        banner_df["PresessionalCourse"] = "--"
-        banner_df["Summer_School"] = "--"
+        banner_df["PresessionalCourse"] = ""
+        banner_df["Summer_School"] = ""
     if "OnCampus" in banner_df.columns:
         banner_df["Pathway"] = np.where(banner_df["OnCampus"].astype(str) == "Y", "CEG", "")
     else:
