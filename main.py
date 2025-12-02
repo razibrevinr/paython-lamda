@@ -9,7 +9,11 @@ from typing import Optional
 import requests
 import re
 from pandas.api.types import (
-    is_categorical_dtype, is_integer_dtype, is_float_dtype, is_object_dtype
+    is_categorical_dtype,
+    is_integer_dtype,
+    is_float_dtype,
+    is_object_dtype,
+    is_string_dtype,  # 👈 add this
 )
 
 # ---------------------------
@@ -593,6 +597,7 @@ def _do_generate_and_callback(
 
         # 3) Map old->new (safe coalescing) then enforce placeholders on key columns
         final_report = apply_column_mapping_safe(final_report)
+
         final_report = enforce_no_placeholder(
             final_report,
             NEVER_PLACEHOLDER_COLS,
@@ -600,6 +605,7 @@ def _do_generate_and_callback(
             recategorize=False,
         )
 
+        # and optionally keep this (it turns any existing "--" into empty)
         final_report = remove_placeholder_dashes(final_report)
 
         # 3.5) Quick integrity log for key columns

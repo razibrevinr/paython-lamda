@@ -1,4 +1,4 @@
-#!D:\laragon\www\soton-enrolment-etl-script\venv\Scripts\python.exe
+#!G:\laragon\www\paython-lamda\venv\Scripts\python.exe
 
 import sys
 import json
