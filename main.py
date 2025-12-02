@@ -308,6 +308,7 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
 
 def process_banner(banner_path: str) -> pd.DataFrame:
     logger.info("Processing Banner…")
+
     usecols = [
         "AGENCY CODE", "AGENCY NAME", "ID",
         "APPLICATION DATE", "ENTRY TERM", "DOMICILE DESC",
@@ -316,6 +317,7 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         "APDC DESC2", "DECISION DATE", "ESTS CODE", "ESTS DESC",
         "Last Institution Code", "RESD_DESC", "UCAS_ID"
     ]
+
     dtype_map = {
         "ID": "Int32",
         "ENTRY TERM": "string",
@@ -336,39 +338,76 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         "RESD_DESC": "string",
         "UCAS_ID": "string"
     }
+
+    # Load
     banner_df = load_large_excel(banner_path, usecols, dtype_map)
 
-    # ✅ Keep only rows where ESTS CODE is EN / EL / EC / EP
-    if "ESTS CODE" in banner_df.columns:
-        banner_df = banner_df[
-            banner_df["ESTS CODE"].astype(str).str.strip().isin(["EN", "EL", "EC", "EP"])
-        ]
+    # ---------------------------------------------------------
+    # 1️⃣ Filter rows where ESTS CODE is EN / EL / EC / EP ONLY
+    # ---------------------------------------------------------
+    valid_ests = ["EN", "EL", "EC", "EP"]
 
+    if "ESTS CODE" in banner_df.columns:
+        banner_df["ESTS CODE"] = banner_df["ESTS CODE"].astype(str).str.strip().str.upper()
+        banner_df = banner_df[banner_df["ESTS CODE"].isin(valid_ests)]
+    else:
+        logger.warning("ESTS CODE column not found — returning empty dataframe.")
+        return pd.DataFrame()
+
+    # ---------------------------------------------------------
+    # 2️⃣ Filter rows where LEVL_CODE = PC
+    # ---------------------------------------------------------
+    # if "LEVL_CODE" in banner_df.columns:
+    #     banner_df["LEVL_CODE"] = banner_df["LEVL_CODE"].astype(str).str.strip().str.upper()
+    #     banner_df = banner_df[banner_df["LEVL_CODE"] == "PC"]
+    # else:
+    #     logger.warning("LEVL_CODE column missing — skipping LEVL_CODE filter.")
+
+    # ---------------------------------------------------------
+    # 3️⃣ Convert Dates
+    # ---------------------------------------------------------
     for dcol in ["APPLICATION DATE", "DECISION DATE"]:
         if dcol in banner_df.columns:
             banner_df[dcol] = pd.to_datetime(banner_df[dcol], errors="coerce")
 
+    # ---------------------------------------------------------
+    # 4️⃣ Academic Year Extraction
+    # ---------------------------------------------------------
     if "APPLICATION DATE" in banner_df.columns:
-        banner_df["Application_Year"] = extract_academic_year(banner_df["APPLICATION DATE"])
+        banner_df["Application_Year"] = extract_academic_year(
+            banner_df["APPLICATION DATE"]
+        )
     else:
         banner_df["Application_Year"] = np.nan
 
+    # ---------------------------------------------------------
+    # 5️⃣ Program mapping
+    # ---------------------------------------------------------
     if "PROGRAM" in banner_df.columns:
-        presessional_mask = banner_df["PROGRAM"].isin(PRE_SESSIONAL_PROGRAM_CODES)
-        summer_mask = banner_df["PROGRAM"].isin(SUMMER_SCHOOL_PROGRAM_CODES)
-        banner_df["PresessionalCourse"] = np.where(presessional_mask, "Y", "N")
-        banner_df["Summer_School"] = np.where(summer_mask, "Y", "N")
+        banner_df["PresessionalCourse"] = np.where(
+            banner_df["PROGRAM"].isin(PRE_SESSIONAL_PROGRAM_CODES), "Y", "N"
+        )
+        banner_df["Summer_School"] = np.where(
+            banner_df["PROGRAM"].isin(SUMMER_SCHOOL_PROGRAM_CODES), "Y", "N"
+        )
     else:
         banner_df["PresessionalCourse"] = ""
         banner_df["Summer_School"] = ""
 
+    # ---------------------------------------------------------
+    # 6️⃣ Pathway mapping
+    # ---------------------------------------------------------
     if "OnCampus" in banner_df.columns:
-        banner_df["Pathway"] = np.where(banner_df["OnCampus"].astype(str) == "Y", "CEG", "")
+        banner_df["Pathway"] = np.where(
+            banner_df["OnCampus"].astype(str).str.upper() == "Y", "CEG", ""
+        )
     else:
         banner_df["Pathway"] = ""
 
-    logger.info(f"Banner records loaded: {len(banner_df)}")
+    logger.info(f"Banner records loaded after filters: {len(banner_df)}")
+
     return banner_df.reset_index(drop=True)
+
 
 def process_dynamics(dynamics_path: str) -> pd.DataFrame:
     logger.info("Processing Dynamics…")
