@@ -67,6 +67,7 @@ column_mapping = {
     "Last Institution Code": "LAST_INSTITUTION_CODE",
     "ESTS CODE": "ESTS_CODE",
     "ESTS DESC": "ESTS_DESC",
+    "UCAS_ID": "UCAS_ID"
 }
 
 # Final columns that must never end as blank placeholders unintentionally
@@ -159,12 +160,23 @@ def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = Non
                     df[col] = as_string(df[col])
 
     # Ensure requested columns exist
-    missing = set(usecols) - set(df.columns)
-    for c in missing:
-        df[c] = pd.Series(["--"] * len(df))
+   missing = set(usecols) - set(df.columns)
+   for c in missing:
+     df[c] = pd.Series([""] * len(df))
 
     logger.info(f"Data after all operations: \n{df.head()}")
     return reduce_memory_usage(df)
+
+
+def remove_placeholder_dashes(df, placeholder="--") -> pd.DataFrame:
+    df = df.copy()
+    for c in df.columns:
+        s = df[c]
+        if is_object_dtype(s) or is_string_dtype(s) or is_categorical_dtype(s):
+            s = as_string(s)
+            s = s.mask(s.str.strip() == placeholder, "")  # turn "--" into empty
+            df[c] = s
+    return df
 
 # ---------------------------
 # Cleaning / Processing
@@ -200,8 +212,17 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
                           np.where(an_dyn.str.len().fillna(0) > 0, an_dyn, ""))
     df.loc[:, "AGENT_NAME"] = to_string_series(agent_name, index=df.index)
 
+
+     ucas_id_banner = as_string(df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index)))
+    ucas_id_dyn    = as_string(df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index)))
+
+    ucas_id = np.where(ucas_id_banner.str.len().fillna(0) > 0, ucas_id_banner,
+                          np.where(ucas_id_dyn.str.len().fillna(0) > 0, ucas_id_dyn, ""))
+                          
+    df.loc[:, "UCAS_ID"] = to_string_series(ucas_id, index=df.index)
+
     # ---- Ensure existence of common text columns
-    for col in ["FORENAME", "MIDDLE_NAMES", "SURNAME", "PATHWAY_1", "PATHWAY_2", "SCHOOL_NAME", "ENQUIRY_DETAIL"]:
+    for col in ["FORENAME", "MIDDLE_NAMES", "SURNAME", "PATHWAY_1", "PATHWAY_2", "SCHOOL_NAME", "ENQUIRY_DETAIL", "UCAS_ID"]:
         if col not in df.columns:
             df.loc[:, col] = ""
 
@@ -248,7 +269,7 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         "Residence_Description", "LEVL_CODE", "FACULTY NAME", "PROGRAM",
         "PROGRAM DESCRIPTION", "OnCampus", "LATEST DECISION",
         "APDC DESC2", "DECISION DATE", "ESTS CODE", "ESTS DESC",
-        "Last Institution Code", "RESD_DESC"
+        "Last Institution Code", "RESD_DESC", "UCAS_ID"
     ]
     dtype_map = {
         "ID": "Int32",
@@ -267,7 +288,8 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         "Last Institution Code": "string",
         "AGENCY CODE": "string",
         "AGENCY NAME": "string",
-        "RESD_DESC": "string"
+        "RESD_DESC": "string",
+        "UCAS_ID": "string"
     }
     banner_df = load_large_excel(banner_path, usecols, dtype_map)
     for dcol in ["APPLICATION DATE", "DECISION DATE"]:
@@ -296,7 +318,7 @@ def process_dynamics(dynamics_path: str) -> pd.DataFrame:
     logger.info("Processing Dynamics…")
     usecols = [
         "Banner ID", "Agent_Code_Agency_Assisting_Application",
-        "Agency_Assisting_Application", "Agent_Code_Post_App", "Post_App_Agent"
+        "Agency_Assisting_Application", "Agent_Code_Post_App", "Post_App_Agent", "UCAS_ID"
     ]
     dtype_map = {
         "Banner ID": "Int32",
@@ -304,6 +326,7 @@ def process_dynamics(dynamics_path: str) -> pd.DataFrame:
         "Agency_Assisting_Application": "string",
         "Agent_Code_Post_App": "string",
         "Post_App_Agent": "string",
+        "UCAS_ID": "string"
     }
     dynamics_df = load_large_excel(dynamics_path, usecols, dtype_map)
     if "Banner ID" in dynamics_df.columns:
@@ -535,6 +558,8 @@ def _do_generate_and_callback(
             placeholder="--",
             recategorize=False,
         )
+
+        final_report = remove_placeholder_dashes(final_report)
 
         # 3.5) Quick integrity log for key columns
         for col in ["AGENT_CODE", "AGENT_SOURCE", "AGENT_NAME"]:
