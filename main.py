@@ -193,12 +193,23 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     # ---- Student ID (nullable Int32)
     if "ID" in df.columns and "Student ID" not in df.columns:
         df.rename(columns={"ID": "Student ID"}, inplace=True)
+
     base_sid = pd.Series([np.nan] * len(df), index=df.index)
-    df.loc[:, "Student ID"] = pd.to_numeric(df.get("Student ID", base_sid), errors="coerce").astype("Int32")
+    df.loc[:, "Student ID"] = pd.to_numeric(
+        df.get("Student ID", base_sid), errors="coerce"
+    ).astype("Int32")
 
     # ---- AGENT_CODE
-    ac_banner = as_string(df.get("AGENCY CODE", pd.Series([pd.NA] * len(df), index=df.index)))
-    ac_dyn = as_string(df.get("Agent_Code_Agency_Assisting_Application", pd.Series([""] * len(df), index=df.index)))
+    ac_banner = as_string(
+        df.get("AGENCY CODE", pd.Series([pd.NA] * len(df), index=df.index))
+    )
+    ac_dyn = as_string(
+        df.get(
+            "Agent_Code_Agency_Assisting_Application",
+            pd.Series([""] * len(df), index=df.index),
+        )
+    )
+
     agent_code = np.where(
         ac_banner.str.len().fillna(0) > 0,
         ac_banner,
@@ -207,12 +218,22 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[:, "AGENT_CODE"] = to_string_series(agent_code, index=df.index)
 
     # ---- AGENT_SOURCE
-    agent_source = as_string(df.get("Agent Source", pd.Series([pd.NA] * len(df), index=df.index)))
+    agent_source = as_string(
+        df.get("Agent Source", pd.Series([pd.NA] * len(df), index=df.index))
+    )
     df.loc[:, "AGENT_SOURCE"] = agent_source
 
     # ---- AGENT_NAME
-    an_banner = as_string(df.get("AGENCY NAME", pd.Series([pd.NA] * len(df), index=df.index)))
-    an_dyn = as_string(df.get("Agency_Assisting_Application", pd.Series([pd.NA] * len(df), index=df.index)))
+    an_banner = as_string(
+        df.get("AGENCY NAME", pd.Series([pd.NA] * len(df), index=df.index))
+    )
+    an_dyn = as_string(
+        df.get(
+            "Agency_Assisting_Application",
+            pd.Series([pd.NA] * len(df), index=df.index),
+        )
+    )
+
     agent_name = np.where(
         an_banner.str.len().fillna(0) > 0,
         an_banner,
@@ -221,9 +242,14 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[:, "AGENT_NAME"] = to_string_series(agent_name, index=df.index)
 
     # ---- UCAS_ID
-    # (Right now both sources are the same column; this still safely normalises it)
-    ucas_id_banner = as_string(df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index)))
-    ucas_id_dyn = as_string(df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index)))
+    # Currently using UCAS_ID from the same column on both sides, but this keeps the pattern
+    ucas_id_banner = as_string(
+        df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index))
+    )
+    ucas_id_dyn = as_string(
+        df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index))
+    )
+
     ucas_id = np.where(
         ucas_id_banner.str.len().fillna(0) > 0,
         ucas_id_banner,
@@ -254,11 +280,14 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
         if "RESD_DESC" in df.columns:
             df.loc[:, "RESIDENCY_DESCRIPTION"] = as_string(df["RESD_DESC"])
         elif "Residence_Description" in df.columns:
-            df.loc[:, "RESIDENCY_DESCRIPTION"] = as_string(df["Residence_Description"])
+            df.loc[:, "RESIDENCY_DESCRIPTION"] = as_string(
+                df["Residence_Description"]
+            )
 
     # ---- LEVEL normalisation
     if "LEVEL" not in df.columns and "LEVL_CODE" in df.columns:
         df.loc[:, "LEVEL"] = df["LEVL_CODE"]
+
     if "LEVEL" in df.columns:
         lvl = as_string(df["LEVEL"]).replace({"PC": "PGT", "PR": "PGR"})
         df.loc[:, "LEVEL"] = lvl
