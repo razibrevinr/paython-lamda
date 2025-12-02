@@ -120,6 +120,8 @@ def extract_academic_year(dt_series: pd.Series) -> pd.Series:
     end = start + 1
     return pd.Series([f"{int(a)}-{str(int(b))[-2:]}" if not pd.isna(a) else np.nan for a, b in zip(start, end)], index=dt_series.index)
 
+
+
 def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = None) -> pd.DataFrame:
     logger.info(f"Loading {os.path.basename(file_path)}")
     head = pd.read_excel(file_path, engine="openpyxl", nrows=5)
@@ -159,9 +161,9 @@ def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = Non
                 else:
                     df[col] = as_string(df[col])
 
-    # Ensure requested columns exist
-   missing = set(usecols) - set(df.columns)
-   for c in missing:
+    # Ensure requested columns exist, but keep them EMPTY (no "--")
+    missing = set(usecols) - set(df.columns)
+    for c in missing:
         df[c] = pd.Series([""] * len(df))
 
     logger.info(f"Data after all operations: \n{df.head()}")
