@@ -33,9 +33,9 @@ SUMMER_SCHOOL_PROGRAM_CODES = [9541, 9544, 9546, 9547]
 
 # Old -> Final headers
 column_mapping = {
-    "AGENCY CODE": "AGENT_CODE",
-    "Agent Source": "AGENT_SOURCE",
-    "AGENCY NAME": "AGENT_NAME",
+    "AGENT_CODE": "AGENT_CODE",
+    "AGENT_SOURCE": "AGENT_SOURCE",
+    "AGENT_NAME": "AGENT_NAME",
     "Student ID": "APPLICANT_NO",
 
     "FORENAME": "FORENAME",
