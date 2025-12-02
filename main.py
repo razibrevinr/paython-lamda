@@ -183,6 +183,8 @@ def remove_placeholder_dashes(df, placeholder="--") -> pd.DataFrame:
 # ---------------------------
 # Cleaning / Processing
 # ---------------------------
+
+
 def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build clean enrolment fields on string dtype (no early categoricals).
@@ -241,22 +243,6 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     )
     df.loc[:, "AGENT_NAME"] = to_string_series(agent_name, index=df.index)
 
-    # ---- UCAS_ID
-    # Currently using UCAS_ID from the same column on both sides, but this keeps the pattern
-    ucas_id_banner = as_string(
-        df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index))
-    )
-    ucas_id_dyn = as_string(
-        df.get("UCAS_ID", pd.Series([pd.NA] * len(df), index=df.index))
-    )
-
-    ucas_id = np.where(
-        ucas_id_banner.str.len().fillna(0) > 0,
-        ucas_id_banner,
-        np.where(ucas_id_dyn.str.len().fillna(0) > 0, ucas_id_dyn, ""),
-    )
-    df.loc[:, "UCAS_ID"] = to_string_series(ucas_id, index=df.index)
-
     # ---- Ensure existence of common text columns
     for col in [
         "FORENAME",
@@ -266,7 +252,6 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
         "PATHWAY_2",
         "SCHOOL_NAME",
         "ENQUIRY_DETAIL",
-        "UCAS_ID",
     ]:
         if col not in df.columns:
             df.loc[:, col] = ""
@@ -314,6 +299,8 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
 
     logger.info("Final report cleaned.")
     return df
+
+
 
 def process_banner(banner_path: str) -> pd.DataFrame:
     logger.info("Processing Banner…")
