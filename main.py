@@ -162,7 +162,7 @@ def load_large_excel(file_path: str, usecols: list, dtype_map: dict | None = Non
     # Ensure requested columns exist
    missing = set(usecols) - set(df.columns)
    for c in missing:
-     df[c] = pd.Series([""] * len(df))
+        df[c] = pd.Series([""] * len(df))
 
     logger.info(f"Data after all operations: \n{df.head()}")
     return reduce_memory_usage(df)
