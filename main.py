@@ -337,13 +337,22 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         "UCAS_ID": "string"
     }
     banner_df = load_large_excel(banner_path, usecols, dtype_map)
+
+    # ✅ Keep only rows where ESTS CODE is EN / EL / EC / EP
+    if "ESTS CODE" in banner_df.columns:
+        banner_df = banner_df[
+            banner_df["ESTS CODE"].astype(str).str.strip().isin(["EN", "EL", "EC", "EP"])
+        ]
+
     for dcol in ["APPLICATION DATE", "DECISION DATE"]:
         if dcol in banner_df.columns:
             banner_df[dcol] = pd.to_datetime(banner_df[dcol], errors="coerce")
+
     if "APPLICATION DATE" in banner_df.columns:
         banner_df["Application_Year"] = extract_academic_year(banner_df["APPLICATION DATE"])
     else:
         banner_df["Application_Year"] = np.nan
+
     if "PROGRAM" in banner_df.columns:
         presessional_mask = banner_df["PROGRAM"].isin(PRE_SESSIONAL_PROGRAM_CODES)
         summer_mask = banner_df["PROGRAM"].isin(SUMMER_SCHOOL_PROGRAM_CODES)
@@ -352,10 +361,12 @@ def process_banner(banner_path: str) -> pd.DataFrame:
     else:
         banner_df["PresessionalCourse"] = ""
         banner_df["Summer_School"] = ""
+
     if "OnCampus" in banner_df.columns:
         banner_df["Pathway"] = np.where(banner_df["OnCampus"].astype(str) == "Y", "CEG", "")
     else:
         banner_df["Pathway"] = ""
+
     logger.info(f"Banner records loaded: {len(banner_df)}")
     return banner_df.reset_index(drop=True)
 
