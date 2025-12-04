@@ -423,9 +423,15 @@ def process_dynamics(dynamics_path: str) -> pd.DataFrame:
         "Post_App_Agent": "string",
         "UCAS_ID": "string"
     }
+
     dynamics_df = load_large_excel(dynamics_path, usecols, dtype_map)
     if "Banner ID" in dynamics_df.columns:
         dynamics_df = dynamics_df.drop_duplicates(subset=["Banner ID"])
+
+    # Drop UCAS_ID to avoid _x/_y in merge
+    if "UCAS_ID" in dynamics_df.columns:
+        dynamics_df = dynamics_df.drop(columns=["UCAS_ID"])
+
     logger.info(f"Dynamics records after dedupe: {len(dynamics_df)}")
     return dynamics_df.reset_index(drop=True)
 
@@ -531,17 +537,41 @@ def process_fee04(fee04_path: str) -> pd.DataFrame:
     logger.info(f"Processed fee metrics for {len(grouped)} students")
     return grouped
 
+# def merge_datasets(banner: pd.DataFrame, dynamics: pd.DataFrame, fee04: pd.DataFrame) -> pd.DataFrame:
+#     logger.info("Merging datasets…")
+#     merged = pd.merge(banner, dynamics, left_on="ID", right_on="Banner ID", how="left")
+#     final = pd.merge(merged, fee04, left_on="ID", right_on="Student ID", how="left")
+#     final.drop(["Banner ID", "Student ID"], axis=1, errors="ignore", inplace=True)
+
+#     # ⚠️ Do NOT fill with 0 here; keep NaN to detect truly missing matches
+#     # for col in ["Tuition_Fees", "Scholarship_Discount", "Commissionable_Amount", "Presessional_Fee"]:
+#     #     if col in final.columns:
+#     #         final[col] = final[col].fillna(0)
+
+#     logger.info(f"Final merged records: {len(final)}")
+#     return final
+
 def merge_datasets(banner: pd.DataFrame, dynamics: pd.DataFrame, fee04: pd.DataFrame) -> pd.DataFrame:
     logger.info("Merging datasets…")
-    merged = pd.merge(banner, dynamics, left_on="ID", right_on="Banner ID", how="left")
-    final = pd.merge(merged, fee04, left_on="ID", right_on="Student ID", how="left")
+    merged = pd.merge(
+        banner,
+        dynamics,
+        left_on="ID",
+        right_on="Banner ID",
+        how="left",
+        suffixes=("", "_dyn"),  # suffix only affects dynamics cols
+    )
+
+    final = pd.merge(
+        merged,
+        fee04,
+        left_on="ID",
+        right_on="Student ID",
+        how="left",
+        suffixes=("", "_fee"),
+    )
+
     final.drop(["Banner ID", "Student ID"], axis=1, errors="ignore", inplace=True)
-
-    # ⚠️ Do NOT fill with 0 here; keep NaN to detect truly missing matches
-    # for col in ["Tuition_Fees", "Scholarship_Discount", "Commissionable_Amount", "Presessional_Fee"]:
-    #     if col in final.columns:
-    #         final[col] = final[col].fillna(0)
-
     logger.info(f"Final merged records: {len(final)}")
     return final
 
