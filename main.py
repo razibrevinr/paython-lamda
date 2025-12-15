@@ -25,6 +25,7 @@ logger = logging.getLogger("enrolment-report")
 # Constants / Mappings
 # ---------------------------
 PRE_SESSIONAL_PROGRAM_CODES = [4287, 4291, 8383, 8384, 8454, 8802, 8809, 8810, 8811, 8332]
+# i need more a PRE_SESSIONAL_PROGRAM_CODES
 SUMMER_SCHOOL_PROGRAM_CODES = [9541, 9544, 9546, 9547]
 
 # Old -> Final headers
@@ -370,13 +371,18 @@ def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
     pres_mask = prog_mask & pres_type & pres_self
 
     pres_vals = group.loc[pres_mask, "Original Transaction Value"].astype(float)
-    pres_fee = pres_vals.max() if not pres_vals.empty else np.nan
+    pres_vals_abs_sum = pres_vals.abs().sum() if not pres_vals.empty else np.nan
 
+    # Adjust Tuition Fees based on pre-sessional condition
+    if pres_type.any():
+        tuition_val = pres_vals_abs_sum if pd.notna(pres_vals_abs_sum) else tuition_val
+
+    # Return the updated Series
     return pd.Series({
         "Tuition_Fees": tuition_val if pd.notna(tuition_val) else np.nan,
         "Scholarship_Discount": scholarship_abs if pd.notna(scholarship_abs) else np.nan,
         "Commissionable_Amount": commissionable if pd.notna(commissionable) else np.nan,
-        "Presessional_Fee": pres_fee if pd.notna(pres_fee) else np.nan,
+        "Presessional_Fee": pres_vals_abs_sum if pd.notna(pres_vals_abs_sum) else np.nan,
     })
 
 def process_fee04(fee04_path: str) -> pd.DataFrame:
