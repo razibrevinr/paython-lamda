@@ -197,6 +197,9 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     logger.info("Cleaning final report…")
 
+    # Reset index to avoid errors when assigning scalar values
+    df = df.reset_index(drop=True)
+
     # ---- Student ID (nullable Int32)
     if "ID" in df.columns and "Student ID" not in df.columns:
         df.rename(columns={"ID": "Student ID"}, inplace=True)
@@ -249,7 +252,7 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[:, "AGENT_NAME"] = to_string_series(agent_name, index=df.index)
 
     # ---- Ensure existence of common text columns
-    for col in [
+    common_columns = [
         "FORENAME",
         "MIDDLE_NAMES",
         "SURNAME",
@@ -257,35 +260,36 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
         "PATHWAY_2",
         "SCHOOL_NAME",
         "ENQUIRY_DETAIL",
-    ]:
+    ]
+    
+    # Initialize columns with an empty string if they don't exist
+    for col in common_columns:
         if col not in df.columns:
-            df.loc[:, col] = ""
+            df[col] = ""  # This will create the column if it doesn't exist
 
     # ---- COUNTRY_OF_DOMICILE
     if "COUNTRY_OF_DOMICILE" not in df.columns and "DOMICILE DESC" in df.columns:
-        df.loc[:, "COUNTRY_OF_DOMICILE"] = as_string(df["DOMICILE DESC"])
+        df["COUNTRY_OF_DOMICILE"] = as_string(df["DOMICILE DESC"])
 
     # ---- RESIDENCY_DESCRIPTION
     if "RESIDENCY_DESCRIPTION" not in df.columns:
         if "RESD_DESC" in df.columns:
-            df.loc[:, "RESIDENCY_DESCRIPTION"] = as_string(df["RESD_DESC"])
+            df["RESIDENCY_DESCRIPTION"] = as_string(df["RESD_DESC"])
         elif "Residence_Description" in df.columns:
-            df.loc[:, "RESIDENCY_DESCRIPTION"] = as_string(
-                df["Residence_Description"]
-            )
+            df["RESIDENCY_DESCRIPTION"] = as_string(df["Residence_Description"])
 
     # ---- LEVEL normalisation
     if "LEVEL" not in df.columns and "LEVL_CODE" in df.columns:
-        df.loc[:, "LEVEL"] = df["LEVL_CODE"]
+        df["LEVEL"] = df["LEVL_CODE"]
 
     if "LEVEL" in df.columns:
         lvl = as_string(df["LEVEL"]).replace({"PC": "PGT", "PR": "PGR"})
-        df.loc[:, "LEVEL"] = lvl
+        df["LEVEL"] = lvl
 
     # ---- Reorder (final names)
     front = ["AGENT_CODE", "AGENT_SOURCE", "AGENT_NAME", "Student ID"]
     rest = [c for c in df.columns if c not in front]
-    df = df.loc[:, front + rest]
+    df = df[front + rest]
 
     # ---- Drop helpers
     df.drop(
@@ -307,7 +311,7 @@ def clean_final_report(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-def process_banner(banner_path: str) -> pd.DataFrame:
+def process_banner(banner_path: str, fee04: pd.DataFrame) -> pd.DataFrame:
     logger.info("Processing Banner…")
 
     usecols = [
@@ -340,14 +344,16 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         "UCAS_ID": "string"
     }
 
-    # Load
+    # Check the columns in fee04 before processing
+    logger.info(f"Columns in fee04: {fee04.columns.tolist()}")
+
+    # Load Banner data
     banner_df = load_large_excel(banner_path, usecols, dtype_map)
 
     # ---------------------------------------------------------
     # 1️⃣ Filter rows where ESTS CODE is EN / EL / EC / EP ONLY
     # ---------------------------------------------------------
     valid_ests = ["EN", "EL", "EC", "EP"]
-
     if "ESTS CODE" in banner_df.columns:
         banner_df["ESTS CODE"] = banner_df["ESTS CODE"].astype(str).str.strip().str.upper()
         banner_df = banner_df[banner_df["ESTS CODE"].isin(valid_ests)]
@@ -356,48 +362,72 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     # ---------------------------------------------------------
-    # 2️⃣ Filter rows where LEVL_CODE = PC
+    # 2️⃣ Process Tuition Fee Calculation
     # ---------------------------------------------------------
-    # if "LEVL_CODE" in banner_df.columns:
-    #     banner_df["LEVL_CODE"] = banner_df["LEVL_CODE"].astype(str).str.strip().str.upper()
-    #     banner_df = banner_df[banner_df["LEVL_CODE"] == "PC"]
-    # else:
-    #     logger.warning("LEVL_CODE column missing — skipping LEVL_CODE filter.")
+    # Check if required columns exist in fee04 before accessing them
+    required_columns = ["Student ID", "Programme", "Fee Type(T)", "Sponsor Code", "Sponsor Code(T)", "Original Transaction Value"]
+    
+    missing_columns = [col for col in required_columns if col not in fee04.columns]
+    if missing_columns:
+        logger.error(f"Missing columns in fee04: {missing_columns}")
+        return pd.DataFrame()  # Or handle gracefully
+
+    # Now, calculate the tuition fees using the `calculate_fee_metrics` function
+    fee_metrics = fee04[required_columns]
+    fee_metrics_grouped = fee_metrics.groupby("Student ID", group_keys=False).apply(calculate_fee_metrics).reset_index()
+
+    # Merge the calculated fees back into the banner dataframe based on Student ID
+    banner_df = pd.merge(
+        banner_df,
+        fee_metrics_grouped[['Student ID', 'Tuition_Fees']],
+        left_on="ID",  # Matching by Student ID
+        right_on="Student ID",
+        how="left",
+    )
 
     # ---------------------------------------------------------
-    # 3️⃣ Convert Dates
+    # 3️⃣ Update Tuition_Fees for Students Not in fee_metrics
+    # ---------------------------------------------------------
+    fixed_program_codes = {
+        8809: 3510, 8383: 3510, 4291: 3510,
+        8810: 5775, 8384: 5775, 4287: 5775,
+        8802: 7920, 8811: 7920
+    }
+
+    missing_fee_students = banner_df[banner_df["Tuition_Fees"].isna()]
+
+    for index, row in missing_fee_students.iterrows():
+        program_code = row["PROGRAM"]
+        if program_code in fixed_program_codes:
+            banner_df.loc[index, "Tuition_Fees"] = fixed_program_codes[program_code]
+        else:
+            banner_df.loc[index, "Tuition_Fees"] = np.nan  # Or a default value if needed
+
+    # ---------------------------------------------------------
+    # 4️⃣ Other Processing (like converting dates, extracting academic year, etc.)
     # ---------------------------------------------------------
     for dcol in ["APPLICATION DATE", "DECISION DATE"]:
         if dcol in banner_df.columns:
             banner_df[dcol] = pd.to_datetime(banner_df[dcol], errors="coerce")
 
     # ---------------------------------------------------------
-    # 4️⃣ Academic Year Extraction
+    # 5️⃣ Academic Year Extraction
     # ---------------------------------------------------------
     if "APPLICATION DATE" in banner_df.columns:
-        banner_df["Application_Year"] = extract_academic_year(
-            banner_df["APPLICATION DATE"]
-        )
+        banner_df["Application_Year"] = extract_academic_year(banner_df["APPLICATION DATE"])
     else:
         banner_df["Application_Year"] = np.nan
 
     # ---------------------------------------------------------
-    # 5️⃣ Program mapping
+    # 6️⃣ Additional Processing (Program, Pathway, etc.)
     # ---------------------------------------------------------
-    if "PROGRAM" in banner_df.columns:
-        banner_df["PresessionalCourse"] = np.where(
-            banner_df["PROGRAM"].isin(PRE_SESSIONAL_PROGRAM_CODES), "Y", "N"
-        )
-        banner_df["Summer_School"] = np.where(
-            banner_df["PROGRAM"].isin(SUMMER_SCHOOL_PROGRAM_CODES), "Y", "N"
-        )
-    else:
-        banner_df["PresessionalCourse"] = ""
-        banner_df["Summer_School"] = ""
+    banner_df["PresessionalCourse"] = np.where(
+        banner_df["PROGRAM"].isin(PRE_SESSIONAL_PROGRAM_CODES), "Y", "N"
+    )
+    banner_df["Summer_School"] = np.where(
+        banner_df["PROGRAM"].isin(SUMMER_SCHOOL_PROGRAM_CODES), "Y", "N"
+    )
 
-    # ---------------------------------------------------------
-    # 6️⃣ Pathway mapping
-    # ---------------------------------------------------------
     if "OnCampus" in banner_df.columns:
         banner_df["Pathway"] = np.where(
             banner_df["OnCampus"].astype(str).str.upper() == "Y", "CEG", ""
@@ -406,19 +436,6 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         banner_df["Pathway"] = ""
 
     logger.info(f"Banner records loaded after filters: {len(banner_df)}")
-    fixed_program_codes = {
-        8809: 3510, 8383: 3510, 4291: 3510,
-        8810: 5775, 8384: 5775, 4287: 5775,
-        8802: 7920, 8811: 7920
-    }
-
-    if "PROGRAM" in banner_df.columns:
-        # Check if program matches one of the fixed program codes and set tuition fees accordingly
-        banner_df["Tuition_Fees"] = banner_df["PROGRAM"].map(fixed_program_codes)
-        banner_df["Tuition_Fees"].fillna("No Fixed Fee", inplace=True)
-    else:
-        banner_df["Tuition_Fees"] = "No Program Found"
-
     return banner_df.reset_index(drop=True)
 
 
@@ -571,10 +588,19 @@ def process_fee04(fee04_path: str) -> pd.DataFrame:
 
 def merge_datasets(banner: pd.DataFrame, dynamics: pd.DataFrame, fee04: pd.DataFrame) -> pd.DataFrame:
     logger.info("Merging datasets…")
+
+    # Check if 'ID' exists in banner, otherwise use 'Student ID'
+    if 'ID' not in banner.columns:
+        if 'Student ID' in banner.columns:
+            banner = banner.rename(columns={'Student ID': 'ID'})  # Rename 'Student ID' to 'ID' for consistency
+        else:
+            logger.error("'ID' or 'Student ID' column not found in banner dataframe!")
+            return pd.DataFrame()  # Or handle as needed
+
     merged = pd.merge(
         banner,
         dynamics,
-        left_on="ID",
+        left_on="ID",  # Merge on 'ID'
         right_on="Banner ID",
         how="left",
         suffixes=("", "_dyn"),  # suffix only affects dynamics cols
@@ -583,7 +609,7 @@ def merge_datasets(banner: pd.DataFrame, dynamics: pd.DataFrame, fee04: pd.DataF
     final = pd.merge(
         merged,
         fee04,
-        left_on="ID",
+        left_on="ID",  # Merge on 'ID'
         right_on="Student ID",
         how="left",
         suffixes=("", "_fee"),
@@ -684,16 +710,18 @@ def _do_generate_and_callback(
     """
     out_path = None
     try:
-        # 1) Load sources
-        banner = process_banner(banner_path)
-        dynamics = process_dynamics(dynamics_path)
-        fee04   = process_fee04(fee04_path)
+        # 1) Load fee04 data first
+        fee04 = process_fee04(fee04_path)  # Load fee04 first
 
-        # 2) Merge + clean
+        # 2) Load and process Banner data
+        banner = process_banner(banner_path, fee04)  # Now fee04 is available here
+        dynamics = process_dynamics(dynamics_path)
+
+        # 3) Merge + clean
         final_report = merge_datasets(banner, dynamics, fee04)
         final_report = clean_final_report(final_report)
 
-        # 3) Map old->new (safe coalescing) then enforce placeholders on key columns
+        # 4) Map old->new (safe coalescing) then enforce placeholders on key columns
         final_report = apply_column_mapping_safe(final_report)
 
         final_report = enforce_no_placeholder(
@@ -703,10 +731,10 @@ def _do_generate_and_callback(
             recategorize=False,
         )
 
-        # and optionally keep this (it turns any existing "--" into empty)
+        # Optionally keep this (it turns any existing "--" into empty)
         final_report = remove_placeholder_dashes(final_report)
 
-        # 3.5) Quick integrity log for key columns
+        # 5) Quick integrity log for key columns
         for col in ["AGENT_CODE", "AGENT_SOURCE", "AGENT_NAME"]:
             if col in final_report.columns:
                 nonblank = as_string(final_report[col]).str.strip().ne("").sum()
@@ -716,13 +744,13 @@ def _do_generate_and_callback(
             else:
                 logger.error(f"[sanity] {col} missing from final report!")
 
-        # 4) Export to temp file
+        # 6) Export to temp file
         out = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
         out_path = out.name
         out.close()
         final_report.to_excel(out_path, index=False)
 
-        # 5) Prepare callback
+        # 7) Prepare callback
         headers = {}
         if callback_token:
             headers["X-Callback-Token"] = callback_token
