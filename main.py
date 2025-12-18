@@ -346,7 +346,7 @@ def process_banner(banner_path: str) -> pd.DataFrame:
     # ---------------------------------------------------------
     # 1️⃣ Filter rows where ESTS CODE is EN / EL / EC / EP ONLY
     # ---------------------------------------------------------
-    valid_ests = ["EN", "EL", "EC", "EP"]
+    valid_ests = ["EN"]
 
     if "ESTS CODE" in banner_df.columns:
         banner_df["ESTS CODE"] = banner_df["ESTS CODE"].astype(str).str.strip().str.upper()
@@ -448,11 +448,9 @@ SCHOLARSHIP_KEY = "tuition fee reduction"
 
 def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
     # Normalize text once
-    fee_type     = _norm_txt(group["Fee Type(T)"])                 # e.g., "tuition fees"
-    sponsor_code = _norm_txt(group["Sponsor Code"])                # e.g., "self"
-    sponsor_t    = _norm_txt(group["Sponsor Code(T)"])             # e.g., "self-funded"
-    # tx_type optional, kept for future logic if needed
-    # tx_type      = _norm_txt(group.get("Transaction Type", ""))  # noqa: F841
+    fee_type = _norm_txt(group["Fee Type(T)"])  # e.g., "tuition fees"
+    sponsor_code = _norm_txt(group["Sponsor Code"])  # e.g., "self"
+    sponsor_t = _norm_txt(group["Sponsor Code(T)"])  # e.g., "self-funded"
 
     # Numeric value
     val = pd.to_numeric(group["Original Transaction Value"], errors="coerce")
@@ -488,20 +486,35 @@ def calculate_fee_metrics(group: pd.DataFrame) -> pd.Series:
         commissionable = np.nan
 
     # ------- PRE-SESSIONAL FEE -------
-    prog = pd.to_numeric(group.get("Programme", np.nan), errors="coerce")
-    prog_mask = prog.isin(PRE_SESSIONAL_PROGRAM_CODES)
+    prog_mask = group["Programme"].isin(PRE_SESSIONAL_PROGRAM_CODES)
     pres_type = _norm_txt(group["Fee Type(T)"]).eq("pre-sessional fee deposit")
     pres_self = sponsor_code.isin(SELF_CODES)
     pres_mask = prog_mask & pres_type & pres_self
 
-    pres_vals = group.loc[pres_mask, "Original Transaction Value"].astype(float)
+    # Check which rows are selected by pres_mask
+    pres_vals = group.loc[pres_mask, "Original Transaction Value"]
+
+    # Calculate the sum of absolute values
     pres_vals_abs_sum = pres_vals.abs().sum() if not pres_vals.empty else np.nan
 
     # Adjust Tuition Fees based on pre-sessional condition
-    if pres_type.any():
+    if pres_type.any():  # Check if there are any "pre-sessional fee deposit" records
         tuition_val = pres_vals_abs_sum if pd.notna(pres_vals_abs_sum) else tuition_val
 
-    # Return the updated Series
+    # ------- FIXED TUITION FEE BASED ON PROGRAM CODE -------
+    fixed_program_codes = {
+        8809: 3510, 8383: 3510, 4291: 3510,
+        8810: 5775, 8384: 5775, 4287: 5775,
+        8802: 7920, 8811: 7920
+    }
+
+    # Check if the program code exists in fixed_program_codes, and set the fixed tuition value
+    prog = pd.to_numeric(group.get("Programme", np.nan), errors="coerce")
+    
+    if prog.isin(fixed_program_codes.keys()).any():
+        # Assign the fixed tuition value for matching program codes
+        tuition_val = prog.map(fixed_program_codes).iloc[0]  # Map and get the fixed value for the first row
+
     return pd.Series({
         "Tuition_Fees": tuition_val if pd.notna(tuition_val) else np.nan,
         "Scholarship_Discount": scholarship_abs if pd.notna(scholarship_abs) else np.nan,
