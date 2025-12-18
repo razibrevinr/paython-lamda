@@ -346,7 +346,7 @@ def process_banner(banner_path: str) -> pd.DataFrame:
     # ---------------------------------------------------------
     # 1️⃣ Filter rows where ESTS CODE is EN / EL / EC / EP ONLY
     # ---------------------------------------------------------
-    valid_ests = ["EN"]
+    valid_ests = ["EN", "EL", "EC", "EP"]
 
     if "ESTS CODE" in banner_df.columns:
         banner_df["ESTS CODE"] = banner_df["ESTS CODE"].astype(str).str.strip().str.upper()
