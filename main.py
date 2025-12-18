@@ -406,6 +406,18 @@ def process_banner(banner_path: str) -> pd.DataFrame:
         banner_df["Pathway"] = ""
 
     logger.info(f"Banner records loaded after filters: {len(banner_df)}")
+    fixed_program_codes = {
+        8809: 3510, 8383: 3510, 4291: 3510,
+        8810: 5775, 8384: 5775, 4287: 5775,
+        8802: 7920, 8811: 7920
+    }
+
+    if "PROGRAM" in banner_df.columns:
+        # Check if program matches one of the fixed program codes and set tuition fees accordingly
+        banner_df["Tuition_Fees"] = banner_df["PROGRAM"].map(fixed_program_codes)
+        banner_df["Tuition_Fees"].fillna("No Fixed Fee", inplace=True)
+    else:
+        banner_df["Tuition_Fees"] = "No Program Found"
 
     return banner_df.reset_index(drop=True)
 
@@ -556,19 +568,6 @@ def process_fee04(fee04_path: str) -> pd.DataFrame:
     logger.info(f"Processed fee metrics for {len(grouped)} students")
     return grouped
 
-# def merge_datasets(banner: pd.DataFrame, dynamics: pd.DataFrame, fee04: pd.DataFrame) -> pd.DataFrame:
-#     logger.info("Merging datasets…")
-#     merged = pd.merge(banner, dynamics, left_on="ID", right_on="Banner ID", how="left")
-#     final = pd.merge(merged, fee04, left_on="ID", right_on="Student ID", how="left")
-#     final.drop(["Banner ID", "Student ID"], axis=1, errors="ignore", inplace=True)
-
-#     # ⚠️ Do NOT fill with 0 here; keep NaN to detect truly missing matches
-#     # for col in ["Tuition_Fees", "Scholarship_Discount", "Commissionable_Amount", "Presessional_Fee"]:
-#     #     if col in final.columns:
-#     #         final[col] = final[col].fillna(0)
-
-#     logger.info(f"Final merged records: {len(final)}")
-#     return final
 
 def merge_datasets(banner: pd.DataFrame, dynamics: pd.DataFrame, fee04: pd.DataFrame) -> pd.DataFrame:
     logger.info("Merging datasets…")
